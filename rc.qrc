@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/">
+        <file>rc/SignalCore.ico</file>
+        <file>rc/SignalCore.png</file>
+    </qresource>
+</RCC>
