@@ -97,23 +97,6 @@ void RCSignalProcessMain::work(const SP_para I_SP,
     this->signalProcess(I_dataFromDataPar, clutterStatic, clutterDynamic);
     CHECK_CUDA(cudaMemcpy(bool_data_h, bool_data, sizeof(unsigned char) * PulseLenMTDNum, cudaMemcpyDeviceToHost));
     CHECK_CUDA(cudaMemcpy(mtd_abs_sum_on_cpu, mtd_abs_sum, sizeof(float) * PulseLenMTDNum, cudaMemcpyDeviceToHost));
-    /*
-     * 导出简报(针对本段 78~218 行):
-     * 1. 当前实现先整块拷回 bool_data / mtd_abs_sum，再在保点循环内按点导出 DianJi_para、pcData、mtdData。
-     * 2. 这种做法在“点数较少、优先保证功能正确”的场景下是合理的:
-     *    - bool_data 与 mtd_abs_sum 是整帧结果，整块 D2H 拷贝一次，开销可控;
-     *    - pc/mtd 复数数据只对通过 CFAR 的点导出，避免把整块脉压/MTD 矩阵全部搬回 CPU。
-     * 3. 当前时延风险主要不在显存占用，而在循环内的多次小同步:
-     *    - 每个点 1 次 DianJi_para 的 cudaMemcpy;
-     *    - 每个点 2 个小 kernel(Get_pc_data_sum / Get_mtd_data_sum);
-     *    - 每个点 2 次 DeviceToHost cudaMemcpy(pcData / mtdData);
-     *    - 每个点 2 次主机侧 malloc/free。
-     * 4. 因此本实现更像“按点同步导出”，点数少时影响通常有限，点数多时更容易带来尾时延升高。
-     * 5. 如果后续发现性能瓶颈，建议优化顺序:
-     *    - 先复用主机缓冲，去掉循环内 malloc/free;
-     *    - 再把多个点的导出合并，减少小尺寸 cudaMemcpy 次数;
-     *    - 最后再考虑 pinned memory / cudaMemcpyAsync / 批量 gather。
-     */
     for (quint32 i = 0; i < PulseLenMTDNum; i++)
     {
         if (bool_data_h[i] == 1 && DotNum < 100)
@@ -190,93 +173,13 @@ void RCSignalProcessMain::work(const SP_para I_SP,
 //                dot_tmp.RCS = pow(10, Pr_0/10) * pow(4*M_PI, 3) * pow(dot_tmp.range, 4) * 6.310/
 //                        (484.57 * 1865 * 1555 * Fazi_t * Fele_t * Fazi_r * Fele_r * pow(cos(dot_tmp.azimuth*M_PI/180)*cos(dot_tmp.elevation*M_PI/180),2)*lambda*lambda);
                 dot_tmp.RCS = pow(dot_tmp.range_array, 4) * pow(4 * M_PI, 3) * pow(dot_tmp.amplitude / (50 * wave_para_current.pw_us) / wave_para_current.pulse_number / pow(10, 74.0 / 10.0 / 2.0) / pow(2, 15) * 1.3 * 1.4, 2) * 0.01 * 6.310 /
-                              (484.57 * pow(10, (32.7221 / 10.0)) * pow(10, (31.9221 / 10.0)) * Fazi_t* Fele_t* Fazi_r* Fele_r * pow(cos(dot_tmp.azimuth_array * M_PI / 180) * cos(dot_tmp.elevation_array * M_PI / 180), 2) * lambda * lambda) * 4;;
-                // 提取当前目标对应距离邻域的三组复数数据:
-                // 1) echoCompensationSum: 脉压前、平台速度补偿后的时域复数回波中心窗;
-                // 2) pc_data_sum: 脉压后的复数慢时间序列(距离-慢时间矩阵切片);
-                // 3) mtd_sum_fftshift: 与当前 CFAR/显示顺序一致的复数 MTD 序列.
-                //
-                // 注意：
-                // 当前 DianJi_para_t 中 rangeCeilIdx / dopCeilIdx 的命名与实际维度相反，
-                // kernel 里实际是 r->doppler, c->range，因此这里必须使用 dopCeilIdx
-                // 作为“真实距离列索引”，否则后续导出的时域/PC/MTD 邻域都会偏到错误位置。
-                const int rangeBinIdx = DianJi_para_h.dopCeilIdx;
+                              (484.57 * pow(10, (32.7221 / 10.0)) * pow(10, (31.9221 / 10.0)) * Fazi_t* Fele_t* Fazi_r* Fele_r * pow(cos(dot_tmp.azimuth_array * M_PI / 180) * cos(dot_tmp.elevation_array * M_PI / 180), 2) * lambda * lambda) * 4;
                 const bool savePcEcho = SignalCore::GlobalVal::GetInstance()->getSavePcEcho();
-                const bool savePcTimeEcho = SignalCore::GlobalVal::GetInstance()->getSavePcTimeEcho();
                 const bool saveMtdEcho = SignalCore::GlobalVal::GetInstance()->getSaveMtdEcho();
-                exportRangeHalfWidth = SignalCore::GlobalVal::GetInstance()->getExportRangeHalfWidth();
-                if(exportRangeHalfWidth < 0)
+                if(1)
                 {
-                    exportRangeHalfWidth = 0;
-                }
-                int exportTimePulseHalfLen = SignalCore::GlobalVal::GetInstance()->getExportTimePulseHalfLen();
-                if(exportTimePulseHalfLen < 0)
-                {
-                    exportTimePulseHalfLen = 0;
-                }
-                const int exportRangeRows = 2 * exportRangeHalfWidth + 1;
-                // 脉压数据长度对应慢时间脉冲数，MTD 数据长度对应多普勒 FFT 点数。
-                // 时域中心窗在脉冲维上从 CPI 中心脉冲向前后扩展 exportTimePulseHalfLen 个位置。
-                const int pcNumber = wave_para_current.pulse_number;
-                const int mtdNumber = wave_para_current.fft_number;
-                const int timePulseRows = 2 * exportTimePulseHalfLen + 1;
-                const int rangeStart = rangeBinIdx - exportRangeHalfWidth;
-                const int rangeEnd = rangeBinIdx + exportRangeHalfWidth;
-                const int validRangeStart = qMax(0, rangeStart);
-                const int validRangeEnd = qMin((int)wave_para_current.pulse_length - 1, rangeEnd);
-                const int validRangeWidth = qMax(0, validRangeEnd - validRangeStart + 1);
-                const int dstRangeOffset = validRangeStart - rangeStart;
-                // 时域中心窗目前以 CPI 中心脉冲为中心提取。
-                // 这是因为当前检测输出只给出了目标距离/多普勒位置，没有单独给出“脉冲维中心”；
-                // 使用 CPI 中心脉冲可以得到一个对称、稳定、固定尺寸的时域窗口，便于识别侧统一处理。
-                const int timePulseCenter = pcNumber / 2;
-                const int timePulseStart = timePulseCenter - exportTimePulseHalfLen;
-                const int timePulseEnd = timePulseCenter + exportTimePulseHalfLen;
-                const int validTimePulseStart = qMax(0, timePulseStart);
-                const int validTimePulseEnd = qMin(pcNumber - 1, timePulseEnd);
-                const int validTimePulseHeight = qMax(0, validTimePulseEnd - validTimePulseStart + 1);
-                const int dstTimePulseOffset = validTimePulseStart - timePulseStart;
-                // 这里改为“整块提取”:
-                // - 对 echoCompensationSum，从 pulse-range 时域矩阵中一次性拷出目标中心窗;
-                // - 对 pc_data_sum，从每个 pulse 行一次性拷出一段连续距离邻域;
-                // - 对 mtd_sum_fftshift，从每个 doppler 行一次性拷出一段连续距离邻域。
-                // 这样避免了此前按 row 循环反复调用小 kernel + 小 cudaMemcpy 的模式。
-                //
-                // 边界策略统一为“越界补 0”:
-                // - 先将输出块整体初始化为 0;
-                // - 仅拷贝输入矩阵与目标中心窗的合法交集区域;
-                // - 距离维/脉冲维超出原始有效范围的位置自然保持为 0。
-                std::vector<SampleComplexFloat> pcTimeBlock(static_cast<size_t>(timePulseRows) * exportRangeRows);
-                std::vector<SampleComplexFloat> pcBlock(static_cast<size_t>(pcNumber) * exportRangeRows);
-                std::vector<SampleComplexFloat> mtdBlock(static_cast<size_t>(mtdNumber) * exportRangeRows);
-                std::fill(pcTimeBlock.begin(), pcTimeBlock.end(), SampleComplexFloat{0.0f, 0.0f});
-                std::fill(pcBlock.begin(), pcBlock.end(), SampleComplexFloat{0.0f, 0.0f});
-                std::fill(mtdBlock.begin(), mtdBlock.end(), SampleComplexFloat{0.0f, 0.0f});
-                //
-                if(validRangeWidth > 0)
-                {
-                    if(savePcTimeEcho && validTimePulseHeight > 0)
-                    {
-//                        CHECK_CUDA(cudaMemcpy2D(
-//                                       reinterpret_cast<char*>(pcTimeBlock.data()) +
-//                                       (static_cast<size_t>(dstTimePulseOffset) * exportRangeRows + dstRangeOffset) * sizeof(SampleComplexFloat),
-//                                       exportRangeRows * sizeof(SampleComplexFloat),
-//                                       pc_data_sum + static_cast<size_t>(validTimePulseStart) * wave_para_current.pulse_length + validRangeStart,
-//                                       wave_para_current.pulse_length * sizeof(cuComplex),
-//                                       validRangeWidth * sizeof(cuComplex),
-//                                       validTimePulseHeight,
-//                                       cudaMemcpyDeviceToHost));
-                    }
                     if(savePcEcho)
                     {
-//                        CHECK_CUDA(cudaMemcpy2D(
-//                                       reinterpret_cast<char*>(pcBlock.data()) + dstRangeOffset * sizeof(SampleComplexFloat),
-//                                       exportRangeRows * sizeof(SampleComplexFloat),
-//                                       pc_data_sum + validRangeStart,
-//                                       wave_para_current.fft_length * sizeof(cuComplex),
-//                                       validRangeWidth * sizeof(cuComplex),
-//                                       pcNumber,
-//                                       cudaMemcpyDeviceToHost));
                         M_Range = i;
                         int mRange = M_Range % wave_para_current.pulse_length;
                         Get_pc_data_sum(pc_data_sum, pc_data_sum_Part, mRange, wave_para_current);
@@ -295,15 +198,6 @@ void RCSignalProcessMain::work(const SP_para I_SP,
                         }
                        free(pc_part_cpu);//2026-0626
                         pc_part_cpu = nullptr;
-
-//                        qDebug() << mRange;
-//                        size_t size_element = wave_para_current.pulse_number * sizeof(cuComplex);
-//                        QString filename = QString("./debug/datasave/pc_part_cpu.dat");
-//                        SaveData(reinterpret_cast<char*>(pc_part_cpu), size_element, filename);
-                        // 假设项目中有 SaveData 函数，接口类似：
-                        // void SaveData(const char* filename, const void* data, int size);
-                        // 或
-                        // bool SaveData(const std::string& path, const char* buffer, int len);
                         std::vector<char> buffer;
                         buffer.insert(buffer.end(), (char*)&dot_tmp.frequency, (char*)&dot_tmp.frequency + sizeof(float));
                         buffer.insert(buffer.end(), (char*)&dot_tmp.amplitude, (char*)&dot_tmp.amplitude + sizeof(float));
@@ -322,14 +216,6 @@ void RCSignalProcessMain::work(const SP_para I_SP,
                     }
                     if(saveMtdEcho)
                     {
-//                        CHECK_CUDA(cudaMemcpy2D(
-//                                       reinterpret_cast<char*>(mtdBlock.data()) + dstRangeOffset * sizeof(SampleComplexFloat),
-//                                       exportRangeRows * sizeof(SampleComplexFloat),
-//                                       mtd_sum_fftshift + validRangeStart,
-//                                       wave_para_current.pulse_length * sizeof(cuComplex),
-//                                       validRangeWidth * sizeof(cuComplex),
-//                                       mtdNumber,
-//                                       cudaMemcpyDeviceToHost));
                         unsigned int mDoppler;
                         M_Range = i;
                         mDoppler = M_Range / wave_para_current.pulse_length;
