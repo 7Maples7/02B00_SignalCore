@@ -2085,8 +2085,7 @@ __global__ void DefClutterMemoryUpdate(float* InData,  float* OutData, int heigh
     if (col < width && row < height)
     {
         int idx = row * width + col;
-        // OutData[idx] = (1.0f - RateWeight)* OutData[idx] + RateWeight * InData[idx];
-        OutData[idx] = RateWeight * OutData[idx] + (1.0f - RateWeight) * InData[idx];
+        OutData[idx] = (1.0f - RateWeight)* OutData[idx] + RateWeight * InData[idx];
     }
 }
 

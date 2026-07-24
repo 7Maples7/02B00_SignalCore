@@ -151,6 +151,20 @@ void RCSignalProcessMain::work(const SP_para I_SP,
                     case (int)Common::ParseCoreType::RadarSG:
                         qDebug() << "ku四面阵雷达测角函数";
                         break;
+                    case (int)Common::ParseCoreType::RadarCF_ZT:
+                        dot_tmp.velocity     = -DianJi_para_h.velocity;
+                        dot_tmp.range_array        = DianJi_para_h.range - 27.0;
+                        dot_tmp.azimuth_array      = data_pack_para_current.bc_azi +
+                                                     SAmpRatioInquire::GetInstance(I_dataFromDataPar->head->radarIndex)
+                                                     ->inquireAziDeg(I_dataFromDataPar->head->mWaveInfo.mRadarFreq,
+                                                             data_pack_para_current.bc_azi,
+                                                             dot_tmp.aziRatio);
+                        dot_tmp.elevation_array    = data_pack_para_current.bc_ele +
+                                                     SAmpRatioInquire::GetInstance(I_dataFromDataPar->head->radarIndex)
+                                                     ->inquireEleDeg(I_dataFromDataPar->head->mWaveInfo.mRadarFreq,
+                                                             data_pack_para_current.bc_ele,
+                                                             dot_tmp.eleRatio);
+                        break;
                 }
                 alpha_azi = 1.15;
                 alpha_ele = 1.15;

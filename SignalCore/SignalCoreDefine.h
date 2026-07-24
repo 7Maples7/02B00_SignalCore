@@ -39,7 +39,7 @@ namespace SignalCore
     /************************************| 杂波图 |************************************/
     struct WaveIndex
     {
-        WaveIndex(int arrayIdx, int pulseNbr,int sampleNbr, float bc_azi_rad, float bc_ele_rad);
+        WaveIndex(int arrayIdx, int pulseNbr, int sampleNbr, float bc_azi_rad, float bc_ele_rad);
         int   arrayIndex = 0;//阵面序号
         float bc_azi_rad = 0;//阵面方位
         float bc_ele_rad = 0;//阵面俯仰
@@ -62,11 +62,11 @@ namespace SignalCore
             {
                 return false;
             }
-            if( v1.pulseAmount  !=v2.pulseAmount)
+            if( v1.pulseAmount  != v2.pulseAmount)
             {
                 return false;
             }
-            if( v1.pulseAmount  !=v2.pulseAmount)
+            if( v1.pulseAmount  != v2.pulseAmount)
             {
                 return false;
             }
@@ -117,10 +117,10 @@ namespace SignalCore
         void save( WaveIndex idx )
         {
             QString path = QString("./log/clutter_save/%0_%1_%2.dat").arg( idx.arrayIndex ).arg( int(  rad2deg( idx.bc_azi_rad)) )
-                    .arg( int( rad2deg( idx.bc_ele_rad ) ) );
-            SaveData( reinterpret_cast<char*>(&this->pulseNbr),sizeof(int),path);
-            SaveDataAppend( reinterpret_cast<char*>(&this->sampleNbr),sizeof(int),path);
-            SaveDataAppend( reinterpret_cast<char*>(*this->array),sizeof(float)*this->size() ,path);
+                           .arg( int( rad2deg( idx.bc_ele_rad ) ) );
+            SaveData( reinterpret_cast<char*>(&this->pulseNbr), sizeof(int), path);
+            SaveDataAppend( reinterpret_cast<char*>(&this->sampleNbr), sizeof(int), path);
+            SaveDataAppend( reinterpret_cast<char*>(*this->array), sizeof(float)*this->size(), path);
         }
     private:
         float** array = nullptr;
