@@ -166,119 +166,10 @@ void RCSignalProcessMain::work(const SP_para I_SP,
                                                              dot_tmp.eleRatio);
                         break;
                 }
-                alpha_azi = 1.15;
-                alpha_ele = 1.15;
-//                freq = I_dataFromDataPar->head->mWaveInfo.mRadarFreq/10e9;
-//                L_txz = -0.2, L_dzf = 26, L_gf = -10, L_hcq = -2, L_pz = 65;
-//                Gama_a = (7.2/(freq*freq+0.34)+0.62/(pow(abs(freq-60),1.5)+1))*freq*freq*10e-3;
-//                Gama_w = (0.05+0.0021*7.5/(pow(freq-22.2,2)+2.4))*freq*freq*7.5*10e-4;
-//                L_atm = (Gama_a+Gama_w)*2*dot_tmp.range/1000;
-//                L_total = pow(10,(L_txz+L_dzf+L_gf+L_hcq+L_pz+L_atm)/10);
-                seitaHalfAzi = 0.88 * lambda / (32 * 17.2e-3 * cos(deg2rad(data_pack_para_current.bc_azi) )) * 180 / M_PI;
-                seitaHalfEle = 0.88 * lambda / (24 * 17.2e-3 * cos(deg2rad(data_pack_para_current.bc_ele))) * 180 / M_PI;
-                Fazi_t = exp(-2.7726 * pow((dot_tmp.azimuth_array - data_pack_para_current.bc_azi) / seitaHalfAzi, 2));
-                Fele_t = exp(-2.7726 * pow((dot_tmp.elevation_array - data_pack_para_current.bc_ele) / seitaHalfEle, 2));
-                Fazi_r = exp(-2.7726 * pow((dot_tmp.azimuth_array - data_pack_para_current.bc_azi) / (alpha_azi * seitaHalfAzi), 2));
-                Fele_r = exp(-2.7726 * pow((dot_tmp.elevation_array - data_pack_para_current.bc_ele) / (alpha_ele * seitaHalfEle), 2));
-                sig_Pr = dot_tmp.amplitude / (50 * wave_para_current.pw_us / 2) / wave_para_current.pulse_number;
-                V_AD = sig_Pr / (32768 - 1) * 1;
-                AD_Pr = 10 * log(V_AD * V_AD / 50 * 1000);
-                Pr_0 = AD_Pr - L_pz - L_dzf;
-//                dot_tmp.RCS = pow(10, Pr_0/10) * pow(4*M_PI, 3) * pow(dot_tmp.range, 4) * 6.310/
-//                        (484.57 * 1865 * 1555 * Fazi_t * Fele_t * Fazi_r * Fele_r * pow(cos(dot_tmp.azimuth*M_PI/180)*cos(dot_tmp.elevation*M_PI/180),2)*lambda*lambda);
-                dot_tmp.RCS = pow(dot_tmp.range_array, 4) * pow(4 * M_PI, 3) * pow(dot_tmp.amplitude / (50 * wave_para_current.pw_us) / wave_para_current.pulse_number / pow(10, 74.0 / 10.0 / 2.0) / pow(2, 15) * 1.3 * 1.4, 2) * 0.01 * 6.310 /
-                              (484.57 * pow(10, (32.7221 / 10.0)) * pow(10, (31.9221 / 10.0)) * Fazi_t* Fele_t* Fazi_r* Fele_r * pow(cos(dot_tmp.azimuth_array * M_PI / 180) * cos(dot_tmp.elevation_array * M_PI / 180), 2) * lambda * lambda) * 4;
-                const bool savePcEcho = SignalCore::GlobalVal::GetInstance()->getSavePcEcho();
-                const bool saveMtdEcho = SignalCore::GlobalVal::GetInstance()->getSaveMtdEcho();
-                if(1)
+                calculateRCS(dot_tmp);
+                if (fillPcAndMtdExportData(dot_tmp, i, I_dataFromDataPar, DotNum))
                 {
-                    if(savePcEcho)
-                    {
-                        M_Range = i;
-                        int mRange = M_Range % wave_para_current.pulse_length;
-                        Get_pc_data_sum(pc_data_sum, pc_data_sum_Part, mRange, wave_para_current);
-                        cuComplex* pc_part_cpu = (cuComplex*)malloc(wave_para_current.pulse_number * sizeof(cuComplex));
-                        //这里拷贝目标所在距离单位对应多普勒维数据，长度为脉冲数量
-                        CHECK_CUDA(cudaMemcpy(pc_part_cpu, pc_data_sum_Part, sizeof(cuComplex) * wave_para_current.pulse_number, cudaMemcpyDeviceToHost));
-                        dot_tmp.pcFreqData.resize(2 * 1 * wave_para_current.pulse_number);
-                        dot_tmp.pcFreqRows = wave_para_current.pulse_number;
-                        dot_tmp.pcFreqCols = 1;
-                        dot_tmp.pcFreqChannels = 2;
-                        int dataLength = wave_para_current.pulse_number;
-                        for (int i = 0; i < dataLength; i++)
-                        {
-                            dot_tmp.pcFreqData[i * 2]     = pc_part_cpu[i].x;
-                            dot_tmp.pcFreqData[i * 2 + 1] = pc_part_cpu[i].y;
-                        }
-                       free(pc_part_cpu);//2026-0626
-                        pc_part_cpu = nullptr;
-                        std::vector<char> buffer;
-                        buffer.insert(buffer.end(), (char*)&dot_tmp.frequency, (char*)&dot_tmp.frequency + sizeof(float));
-                        buffer.insert(buffer.end(), (char*)&dot_tmp.amplitude, (char*)&dot_tmp.amplitude + sizeof(float));
-                        buffer.insert(buffer.end(), (char*)&dot_tmp.pw, (char*)&dot_tmp.pw + sizeof(float));
-                        buffer.insert(buffer.end(), (char*)&dot_tmp.prt, (char*)&dot_tmp.prt + sizeof(float));
-                        buffer.insert(buffer.end(), (char*)&dot_tmp.prtNum, (char*)&dot_tmp.prtNum + sizeof(uint16_t));
-                        buffer.insert(buffer.end(), (char*)&dot_tmp.RCS, (char*)&dot_tmp.RCS + sizeof(float));
-                        buffer.insert(buffer.end(), (char*)dot_tmp.pcFreqData.data(), (char*)dot_tmp.pcFreqData.data() + dot_tmp.prtNum * 2 * sizeof(float));
-                        buffer.insert(buffer.end(), (char*)&dot_tmp.targetType, (char*)&dot_tmp.targetType + sizeof(dot_tmp.targetType));
-                        QDateTime currentTime = QDateTime::currentDateTime();
-                        QString filename = QString("./debug/datasave/dopplerTimeData%0_%1_%2.dat")
-                                           .arg(I_dataFromDataPar->head->mTrkingInfo.TrackNumber)
-                                           .arg(currentTime.toString("MM月dd日hh时mm分ss秒-zzz"))
-                                           .arg(DotNum);
-//                        SaveData( buffer.data(), buffer.size(), filename);
-                    }
-                    if(saveMtdEcho)
-                    {
-                        unsigned int mDoppler;
-                        M_Range = i;
-                        mDoppler = M_Range / wave_para_current.pulse_length;
-                        Get_doppler_data_sum(mtd_sum_fftshift, mtd_sum_Part, mDoppler, wave_para_current);
-                        //这里拷贝目标所在多普勒单元对应距离维数据，长度为脉冲长度
-                        cuComplex* extracted_mtd_data = (cuComplex*)calloc(129, sizeof(cuComplex));  // 全部初始化为0
-                        cuComplex* mtd_part_cpu = (cuComplex*)malloc(wave_para_current.pulse_length * sizeof(cuComplex));
-                        CHECK_CUDA(cudaMemcpy(mtd_part_cpu, mtd_sum_Part, sizeof(cuComplex) * wave_para_current.pulse_length, cudaMemcpyDeviceToHost));
-//                        qDebug() << mtd_part_cpu[0].x << mtd_part_cpu[1].x;
-                        int center = M_Range % wave_para_current.pulse_length;
-                        int pulse_len = wave_para_current.pulse_length;
-                        int start = qMax(0, center - 64);
-                        int end = qMin(pulse_len - 1, center + 64);
-                        int dst_start = start - (center - 64);
-                        memcpy(extracted_mtd_data + dst_start, mtd_part_cpu + start, (end - start + 1) * sizeof(cuComplex));
-                        int extract_length = 129;
-                        dot_tmp.mtdData.resize(2 * extract_length * 1);
-
-                        dot_tmp.mtdRows = 1;
-                        dot_tmp.mtdCols = extract_length;
-                        dot_tmp.mtdChannels = 2;
-                        int dataLength = extract_length;
-                        for (int i = 0; i < dataLength; i++)
-                        {
-                            dot_tmp.mtdData[i * 2]     = extracted_mtd_data[i].x;
-                            dot_tmp.mtdData[i * 2 + 1] = extracted_mtd_data[i].y;
-                        }
-
-                        free(extracted_mtd_data);//2026-0626
-                        free(mtd_part_cpu);
-                        extracted_mtd_data = nullptr;
-                        mtd_part_cpu = nullptr;
-
-                        std::vector<char> buffer;
-                        buffer.insert(buffer.end(), (char*)&dot_tmp.frequency, (char*)&dot_tmp.frequency + sizeof(float));
-                        buffer.insert(buffer.end(), (char*)&dot_tmp.amplitude, (char*)&dot_tmp.amplitude + sizeof(float));
-                        buffer.insert(buffer.end(), (char*)&dot_tmp.pw, (char*)&dot_tmp.pw + sizeof(float));
-                        buffer.insert(buffer.end(), (char*)&dot_tmp.prt, (char*)&dot_tmp.prt + sizeof(float));
-                        buffer.insert(buffer.end(), (char*)&dot_tmp.prtNum, (char*)&dot_tmp.prtNum + sizeof(uint16_t));
-                        buffer.insert(buffer.end(), (char*)&dot_tmp.RCS, (char*)&dot_tmp.RCS + sizeof(float));
-                        buffer.insert(buffer.end(), (char*)dot_tmp.mtdData.data(), (char*)dot_tmp.mtdData.data() + dataLength * 2 * sizeof(float));
-                        buffer.insert(buffer.end(), (char*)&dot_tmp.targetType, (char*)&dot_tmp.targetType + sizeof(dot_tmp.targetType));
-                        QDateTime currentTime = QDateTime::currentDateTime();
-                        QString filename = QString("./debug/datasave/PcPartData%0_%1_%2.dat")
-                                           .arg(I_dataFromDataPar->head->mTrkingInfo.TrackNumber)
-                                           .arg(currentTime.toString("MM月dd日hh时mm分ss秒-zzz"))
-                                           .arg(DotNum);
-//                        SaveData( buffer.data(), buffer.size(), filename);
-                    }
+                    M_Range = i;
                 }
                 // 将原始点迹添加到列表
                 dot_tmp.MtdClsResult = IRadarV51::TargetSubTypeV5::MultiRotorUav;//TODO:后期修改为真实的识别结果
@@ -312,6 +203,119 @@ void RCSignalProcessMain::work(const SP_para I_SP,
     free(bool_data_h);
     iElaps = cuda_seconds() - iStart;
 //    qDebug() << iElaps * 1000;
+}
+
+void RCSignalProcessMain::calculateRCS(IRadarV51::SignalProcPoint& dot_tmp)
+{
+    alpha_azi = 1.15;
+    alpha_ele = 1.15;
+    seitaHalfAzi = 0.88 * lambda / (32 * 17.2e-3 * cos(deg2rad(data_pack_para_current.bc_azi) )) * 180 / M_PI;
+    seitaHalfEle = 0.88 * lambda / (24 * 17.2e-3 * cos(deg2rad(data_pack_para_current.bc_ele))) * 180 / M_PI;
+    Fazi_t = exp(-2.7726 * pow((dot_tmp.azimuth_array - data_pack_para_current.bc_azi) / seitaHalfAzi, 2));
+    Fele_t = exp(-2.7726 * pow((dot_tmp.elevation_array - data_pack_para_current.bc_ele) / seitaHalfEle, 2));
+    Fazi_r = exp(-2.7726 * pow((dot_tmp.azimuth_array - data_pack_para_current.bc_azi) / (alpha_azi * seitaHalfAzi), 2));
+    Fele_r = exp(-2.7726 * pow((dot_tmp.elevation_array - data_pack_para_current.bc_ele) / (alpha_ele * seitaHalfEle), 2));
+    sig_Pr = dot_tmp.amplitude / (50 * wave_para_current.pw_us / 2) / wave_para_current.pulse_number;
+    V_AD = sig_Pr / (32768 - 1) * 1;
+    AD_Pr = 10 * log(V_AD * V_AD / 50 * 1000);
+    Pr_0 = AD_Pr - L_pz - L_dzf;
+    dot_tmp.RCS = pow(dot_tmp.range_array, 4) * pow(4 * M_PI, 3) * pow(dot_tmp.amplitude / (50 * wave_para_current.pw_us) / wave_para_current.pulse_number / pow(10, 74.0 / 10.0 / 2.0) / pow(2, 15) * 1.3 * 1.4, 2) * 0.01 * 6.310 /
+                  (484.57 * pow(10, (32.7221 / 10.0)) * pow(10, (31.9221 / 10.0)) * Fazi_t* Fele_t* Fazi_r* Fele_r * pow(cos(dot_tmp.azimuth_array * M_PI / 180) * cos(dot_tmp.elevation_array * M_PI / 180), 2) * lambda * lambda) * 4;
+}
+
+bool RCSignalProcessMain::fillPcAndMtdExportData(IRadarV51::SignalProcPoint& dot_tmp,
+                                                 quint32 pointIndex,
+                                                 shared_ptr<RawData2SP> I_dataFromDataPar,
+                                                 int DotNum)
+{
+    const bool savePcEcho = SignalCore::GlobalVal::GetInstance()->getSavePcEcho();
+    const bool saveMtdEcho = SignalCore::GlobalVal::GetInstance()->getSaveMtdEcho();
+    const quint32 M_Range = pointIndex;
+
+    if(savePcEcho)
+    {
+        int mRange = M_Range % wave_para_current.pulse_length;
+        Get_pc_data_sum(pc_data_sum, pc_data_sum_Part, mRange, wave_para_current);
+        cuComplex* pc_part_cpu = (cuComplex*)malloc(wave_para_current.pulse_number * sizeof(cuComplex));
+        CHECK_CUDA(cudaMemcpy(pc_part_cpu, pc_data_sum_Part, sizeof(cuComplex) * wave_para_current.pulse_number, cudaMemcpyDeviceToHost));
+        dot_tmp.pcFreqData.resize(2 * 1 * wave_para_current.pulse_number);
+        dot_tmp.pcFreqRows = wave_para_current.pulse_number;
+        dot_tmp.pcFreqCols = 1;
+        dot_tmp.pcFreqChannels = 2;
+        int dataLength = wave_para_current.pulse_number;
+        for (int dataIndex = 0; dataIndex < dataLength; dataIndex++)
+        {
+            dot_tmp.pcFreqData[dataIndex * 2]     = pc_part_cpu[dataIndex].x;
+            dot_tmp.pcFreqData[dataIndex * 2 + 1] = pc_part_cpu[dataIndex].y;
+        }
+        free(pc_part_cpu);//2026-0626
+        pc_part_cpu = nullptr;
+        std::vector<char> buffer;
+        buffer.insert(buffer.end(), (char*)&dot_tmp.frequency, (char*)&dot_tmp.frequency + sizeof(float));
+        buffer.insert(buffer.end(), (char*)&dot_tmp.amplitude, (char*)&dot_tmp.amplitude + sizeof(float));
+        buffer.insert(buffer.end(), (char*)&dot_tmp.pw, (char*)&dot_tmp.pw + sizeof(float));
+        buffer.insert(buffer.end(), (char*)&dot_tmp.prt, (char*)&dot_tmp.prt + sizeof(float));
+        buffer.insert(buffer.end(), (char*)&dot_tmp.prtNum, (char*)&dot_tmp.prtNum + sizeof(uint16_t));
+        buffer.insert(buffer.end(), (char*)&dot_tmp.RCS, (char*)&dot_tmp.RCS + sizeof(float));
+        buffer.insert(buffer.end(), (char*)dot_tmp.pcFreqData.data(), (char*)dot_tmp.pcFreqData.data() + dot_tmp.prtNum * 2 * sizeof(float));
+        buffer.insert(buffer.end(), (char*)&dot_tmp.targetType, (char*)&dot_tmp.targetType + sizeof(dot_tmp.targetType));
+        QDateTime currentTime = QDateTime::currentDateTime();
+        QString filename = QString("./debug/datasave/dopplerTimeData%0_%1_%2.dat")
+                           .arg(I_dataFromDataPar->head->mTrkingInfo.TrackNumber)
+                           .arg(currentTime.toString("MM月dd日hh时mm分ss秒-zzz"))
+                           .arg(DotNum);
+//        SaveData( buffer.data(), buffer.size(), filename);
+    }
+    if(saveMtdEcho)
+    {
+        unsigned int mDoppler;
+        mDoppler = M_Range / wave_para_current.pulse_length;
+        Get_doppler_data_sum(mtd_sum_fftshift, mtd_sum_Part, mDoppler, wave_para_current);
+        cuComplex* extracted_mtd_data = (cuComplex*)calloc(129, sizeof(cuComplex));
+        cuComplex* mtd_part_cpu = (cuComplex*)malloc(wave_para_current.pulse_length * sizeof(cuComplex));
+        CHECK_CUDA(cudaMemcpy(mtd_part_cpu, mtd_sum_Part, sizeof(cuComplex) * wave_para_current.pulse_length, cudaMemcpyDeviceToHost));
+        int center = M_Range % wave_para_current.pulse_length;
+        int pulse_len = wave_para_current.pulse_length;
+        int start = qMax(0, center - 64);
+        int end = qMin(pulse_len - 1, center + 64);
+        int dst_start = start - (center - 64);
+        memcpy(extracted_mtd_data + dst_start, mtd_part_cpu + start, (end - start + 1) * sizeof(cuComplex));
+        int extract_length = 129;
+        dot_tmp.mtdData.resize(2 * extract_length * 1);
+
+        dot_tmp.mtdRows = 1;
+        dot_tmp.mtdCols = extract_length;
+        dot_tmp.mtdChannels = 2;
+        int dataLength = extract_length;
+        for (int dataIndex = 0; dataIndex < dataLength; dataIndex++)
+        {
+            dot_tmp.mtdData[dataIndex * 2]     = extracted_mtd_data[dataIndex].x;
+            dot_tmp.mtdData[dataIndex * 2 + 1] = extracted_mtd_data[dataIndex].y;
+        }
+
+        free(extracted_mtd_data);//2026-0626
+        free(mtd_part_cpu);
+        extracted_mtd_data = nullptr;
+        mtd_part_cpu = nullptr;
+
+        std::vector<char> buffer;
+        buffer.insert(buffer.end(), (char*)&dot_tmp.frequency, (char*)&dot_tmp.frequency + sizeof(float));
+        buffer.insert(buffer.end(), (char*)&dot_tmp.amplitude, (char*)&dot_tmp.amplitude + sizeof(float));
+        buffer.insert(buffer.end(), (char*)&dot_tmp.pw, (char*)&dot_tmp.pw + sizeof(float));
+        buffer.insert(buffer.end(), (char*)&dot_tmp.prt, (char*)&dot_tmp.prt + sizeof(float));
+        buffer.insert(buffer.end(), (char*)&dot_tmp.prtNum, (char*)&dot_tmp.prtNum + sizeof(uint16_t));
+        buffer.insert(buffer.end(), (char*)&dot_tmp.RCS, (char*)&dot_tmp.RCS + sizeof(float));
+        buffer.insert(buffer.end(), (char*)dot_tmp.mtdData.data(), (char*)dot_tmp.mtdData.data() + dataLength * 2 * sizeof(float));
+        buffer.insert(buffer.end(), (char*)&dot_tmp.targetType, (char*)&dot_tmp.targetType + sizeof(dot_tmp.targetType));
+        QDateTime currentTime = QDateTime::currentDateTime();
+        QString filename = QString("./debug/datasave/PcPartData%0_%1_%2.dat")
+                           .arg(I_dataFromDataPar->head->mTrkingInfo.TrackNumber)
+                           .arg(currentTime.toString("MM月dd日hh时mm分ss秒-zzz"))
+                           .arg(DotNum);
+//        SaveData( buffer.data(), buffer.size(), filename);
+    }
+
+    return savePcEcho || saveMtdEcho;
 }
 
 void RCSignalProcessMain::fr_para_init(const SP_para I_SP,

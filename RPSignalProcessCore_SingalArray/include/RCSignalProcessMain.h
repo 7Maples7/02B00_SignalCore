@@ -239,6 +239,11 @@ public:
     int SignalCoreRunCounter();
     void processAndSendMicroDoppler(shared_ptr<RawData2SP> I_dataFromDataPar, quint32& mRange, cuComplex* pcDataSum, const wave_para_t& wavePara);
 private:
+    void calculateRCS(IRadarV51::SignalProcPoint& dot_tmp);
+    bool fillPcAndMtdExportData(IRadarV51::SignalProcPoint& dot_tmp,
+                                quint32 pointIndex,
+                                shared_ptr<RawData2SP> I_dataFromDataPar,
+                                int DotNum);
 
     //4. 数据成员，含静态数据成员。
 public:
