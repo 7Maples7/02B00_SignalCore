@@ -1,4 +1,6 @@
 #include "CSignalProcessThreadMng.h"
+#include <cmath>
+#include <limits>
 #if 0
 CSignalProcessThreadMng::CSignalProcessThreadMng()
 {
@@ -129,6 +131,117 @@ void CSignalProcessThreadMng::active()
     this->exec();
 }
 
+bool CSignalProcessThreadMng::validateReceivedData(const RawData2SPHead* head, int size) const
+{
+    if(head == nullptr)
+    {
+        qWarning() << "[SignalCore] received null data header";
+        return false;
+    }
+    if(size >= 0 && size < static_cast<int>(sizeof(RawData2SPHead)))
+    {
+        qWarning() << "[SignalCore] received data is shorter than header:" << size;
+        return false;
+    }
+    const auto& waveInfo = head->mWaveInfo;
+    bool valid = true;
+    const auto warnInvalidPositive = [&valid](const char* name, double value, bool reject)
+    {
+        if(!std::isfinite(value) || value <= 0)
+        {
+            qWarning() << "[SignalCore] invalid waveform parameter:" << name << value;
+            if(reject)
+            {
+                valid = false;
+            }
+        }
+    };
+    if(!std::isfinite(waveInfo.mRadarFreq) ||
+            waveInfo.mRadarFreq <= 1e6 || waveInfo.mRadarFreq > 1e12)
+    {
+        qWarning() << "[SignalCore] invalid radar frequency (Hz):" << waveInfo.mRadarFreq;
+        valid = false;
+    }
+    warnInvalidPositive("bandwidthHz", waveInfo.mBandwidthHz, true);
+    warnInvalidPositive("sampleFreqHz", waveInfo.mSampleFreqHz, true);
+    warnInvalidPositive("pulseWidthUs", waveInfo.mPulseWidthUs, true);
+    warnInvalidPositive("prtUs", waveInfo.mPRTUs, true);
+    const int sampleNbr = waveInfo.mSampleNbr;
+    if(sampleNbr <= 0)
+    {
+        qWarning() << "[SignalCore] invalid sample number:" << sampleNbr;
+        valid = false;
+    }
+    const double pulseAmount = waveInfo.mPulseAmount;
+    const bool pulseAmountValid = std::isfinite(pulseAmount) &&
+                                  pulseAmount >= 1 &&
+                                  pulseAmount <= std::numeric_limits<int>::max() &&
+                                  std::floor(pulseAmount) == pulseAmount;
+    if(!pulseAmountValid)
+    {
+        qWarning() << "[SignalCore] invalid pulse number:" << pulseAmount;
+        valid = false;
+    }
+    if(pulseAmountValid && sampleNbr > 0 && size >= 0)
+    {
+        const qint64 sampleTotal = static_cast<qint64>(sampleNbr) *
+                                   static_cast<qint64>(pulseAmount);
+        const qint64 bytesPerSampleTotal =
+            3LL * static_cast<qint64>(sizeof(SampleComplexInt16));
+        const qint64 payloadSize = static_cast<qint64>(size) - sizeof(RawData2SPHead);
+        if(sampleTotal > payloadSize / bytesPerSampleTotal)
+        {
+            qWarning() << "[SignalCore] received data length is inconsistent with waveform parameters:"
+                       << "size" << size << "sampleNbr" << sampleNbr << "pulseNbr" << pulseAmount;
+            valid = false;
+        }
+    }
+    if(waveInfo.mPRTUs > 0 && waveInfo.mPulseWidthUs > waveInfo.mPRTUs)
+    {
+        qWarning() << "[SignalCore] pulse width is greater than PRT:"
+                   << waveInfo.mPulseWidthUs << waveInfo.mPRTUs;
+        valid = false;
+    }
+    if(!std::isfinite(waveInfo.mPulseWidthMix) || waveInfo.mPulseWidthMix < 0)
+    {
+        qWarning() << "[SignalCore] invalid mixed pulse width (us):" << waveInfo.mPulseWidthMix;
+    }
+    if(waveInfo.mPulseWidthMix > waveInfo.mPRTUs && waveInfo.mPRTUs > 0)
+    {
+        qWarning() << "[SignalCore] mixed pulse width is greater than PRT:"
+                   << waveInfo.mPulseWidthMix << waveInfo.mPRTUs;
+    }
+    if(waveInfo.mBandwidthHz > waveInfo.mSampleFreqHz && waveInfo.mSampleFreqHz > 0)
+    {
+        qWarning() << "[SignalCore] bandwidth is greater than sample frequency:"
+                   << waveInfo.mBandwidthHz << waveInfo.mSampleFreqHz;
+    }
+    const auto warnAngle = [](const char* name, double value, double minValue, double maxValue)
+    {
+        if(!std::isfinite(value) || value < minValue || value > maxValue)
+        {
+            qWarning() << "[SignalCore] invalid angle (rad):" << name << value;
+        }
+    };
+    warnAngle("aziStationRad", waveInfo.mAziStationRad, -2 * M_PI, 2 * M_PI);
+    warnAngle("eleStationRad", waveInfo.mEleStationRad, -M_PI / 2, M_PI / 2);
+    warnAngle("aziFaceRad", waveInfo.mAziFaceRad, -2 * M_PI, 2 * M_PI);
+    warnAngle("eleFaceRad", waveInfo.mEleFaceRad, -M_PI / 2, M_PI / 2);
+    if(waveInfo.mTimeStampMs <= 0)
+    {
+        qWarning() << "[SignalCore] waveform timestamp is not assigned:" << waveInfo.mTimeStampMs;
+    }
+    if(!std::isfinite(waveInfo.mRngQuanti) || waveInfo.mRngQuanti <= 0)
+    {
+        qWarning() << "[SignalCore] invalid range quantization:" << waveInfo.mRngQuanti;
+    }
+    if(!std::isfinite(waveInfo.mVecQuanti) || waveInfo.mVecQuanti <= 0)
+    {
+        qWarning() << "[SignalCore] invalid velocity quantization:" << waveInfo.mVecQuanti;
+    }
+    return valid;
+}
+
 int CSignalProcessThreadMng::RFReadShareMemory(char* data, int size)
 {
     if(data == nullptr)
@@ -137,6 +250,10 @@ int CSignalProcessThreadMng::RFReadShareMemory(char* data, int size)
         return 0x01;
     }
     RawData2SPHead* head = reinterpret_cast<RawData2SPHead*>( data );
+    if(!validateReceivedData(head, size))
+    {
+        return 0x02;
+    }
     auto ptr =  Common::RawData2SP::fromData(data, size, head->mWaveInfo.sampleNbr(), head->mWaveInfo.pulseAmount());
     if(head->mTrkingInfo.Purpose == 0x42)
     {
@@ -153,16 +270,34 @@ int CSignalProcessThreadMng::RFReadShareMemory(char* data, int size)
         {
             if( ptr->head->mTrkingInfo.Purpose == 0x00  )
             {
-                flg =  mSpProcCore->RFSignalProcess(points,
-                                                    SignalCore::DefClutterMemoryMng::GetInstance()->getClutter(
-                                                        head->arraynbr, head->mWaveInfo.aziFaceRad(),
-                                                        head->mWaveInfo.eleFaceRad(), SignalCore::DefClutterMemoryMng::ClutterType::TStatic,
-                                                        head->mWaveInfo.pulseAmount(),  head->mWaveInfo.sampleNbr()),
-                                                    SignalCore::DefClutterMemoryMng::GetInstance()->getClutter( head->arraynbr,
-                                                            head->mWaveInfo.aziFaceRad(), head->mWaveInfo.eleFaceRad(),
-                                                            SignalCore::DefClutterMemoryMng::ClutterType::TDynamic,
-                                                            head->mWaveInfo.pulseAmount(), head->mWaveInfo.sampleNbr())
-                                                   );
+                if(ptr->head->radarType == (int)Common::ParseCoreType::RadarCF_ZT)
+                {
+                    //ZT_CF Use New Clutter
+                    flg =  mSpProcCore->RFSignalProcess(points,
+                                                        SignalCore::DefClutterMemoryMng::GetInstance()->getClutter(
+                                                            ptr->head->mBeamCode, float(ptr->head->mBeamCode),
+                                                            float(ptr->head->mBeamCode), SignalCore::DefClutterMemoryMng::ClutterType::TStatic,
+                                                            ptr->head->mWaveInfo.pulseAmount(),  ptr->head->mWaveInfo.sampleNbr()),
+                                                        SignalCore::DefClutterMemoryMng::GetInstance()->getClutter(
+                                                            ptr->head->mBeamCode, float(ptr->head->mBeamCode),
+                                                            float(ptr->head->mBeamCode), SignalCore::DefClutterMemoryMng::ClutterType::TDynamic,
+                                                            ptr->head->mWaveInfo.pulseAmount(), ptr->head->mWaveInfo.sampleNbr())
+                                                       );
+                }
+                if(ptr->head->radarType == (int)Common::ParseCoreType::RadarCF)
+                {
+                    //CF Use Old Clutter
+                    flg =  mSpProcCore->RFSignalProcess(points,
+                                                        SignalCore::DefClutterMemoryMng::GetInstance()->getClutter(
+                                                            head->arraynbr, head->mWaveInfo.aziFaceRad(),
+                                                            head->mWaveInfo.eleFaceRad(), SignalCore::DefClutterMemoryMng::ClutterType::TStatic,
+                                                            head->mWaveInfo.pulseAmount(),  head->mWaveInfo.sampleNbr()),
+                                                        SignalCore::DefClutterMemoryMng::GetInstance()->getClutter( head->arraynbr,
+                                                                head->mWaveInfo.aziFaceRad(), head->mWaveInfo.eleFaceRad(),
+                                                                SignalCore::DefClutterMemoryMng::ClutterType::TDynamic,
+                                                                head->mWaveInfo.pulseAmount(), head->mWaveInfo.sampleNbr())
+                                                       );
+                }
             }
             else
             {
@@ -179,7 +314,7 @@ int CSignalProcessThreadMng::RFReadShareMemory(char* data, int size)
             }
         }
         //
-        for(int i = 0;i<points.size();i++)
+        for(int i = 0; i < points.size(); i++)
         {
             points[i].azimuth_array = deg2rad(points[i].azimuth_array);
             points[i].elevation_array = deg2rad(points[i].elevation_array);
@@ -225,16 +360,34 @@ int CSignalProcessThreadMng::RFReplayEchoFromData(DefReplayInfo dataInfo)
     //
     mSpProcCore->setDataFrmPar( ptr );
     QList< IRadarV51::SignalProcPoint> points;
-    mSpProcCore->RFSignalProcess(points,
-                                 SignalCore::DefClutterMemoryMng::GetInstance()->getClutter(
-                                     ptr->head->arraynbr, ptr->head->mWaveInfo.aziFaceRad(),
-                                     ptr->head->mWaveInfo.eleFaceRad(), SignalCore::DefClutterMemoryMng::ClutterType::TStatic,
-                                     ptr->head->mWaveInfo.pulseAmount(),  ptr->head->mWaveInfo.sampleNbr()),
-                                 SignalCore::DefClutterMemoryMng::GetInstance()->getClutter( ptr->head->arraynbr,
-                                         ptr->head->mWaveInfo.aziFaceRad(), ptr->head->mWaveInfo.eleFaceRad(),
-                                         SignalCore::DefClutterMemoryMng::ClutterType::TDynamic,
+    if(ptr->head->radarType == (int)Common::ParseCoreType::RadarCF_ZT)
+    {
+        //ZT_CF Use New Clutter
+        mSpProcCore->RFSignalProcess(points,
+                                     SignalCore::DefClutterMemoryMng::GetInstance()->getClutter(
+                                         ptr->head->mBeamCode, float(ptr->head->mBeamCode),
+                                         float(ptr->head->mBeamCode), SignalCore::DefClutterMemoryMng::ClutterType::TStatic,
+                                         ptr->head->mWaveInfo.pulseAmount(),  ptr->head->mWaveInfo.sampleNbr()),
+                                     SignalCore::DefClutterMemoryMng::GetInstance()->getClutter(
+                                         ptr->head->mBeamCode, float(ptr->head->mBeamCode),
+                                         float(ptr->head->mBeamCode), SignalCore::DefClutterMemoryMng::ClutterType::TDynamic,
                                          ptr->head->mWaveInfo.pulseAmount(), ptr->head->mWaveInfo.sampleNbr())
-                                );
+                                    );
+    }
+    if(ptr->head->radarType == (int)Common::ParseCoreType::RadarCF)
+    {
+        //CF Use Old Clutter
+        mSpProcCore->RFSignalProcess(points,
+                                     SignalCore::DefClutterMemoryMng::GetInstance()->getClutter(
+                                         ptr->head->arraynbr, ptr->head->mWaveInfo.aziFaceRad(),
+                                         ptr->head->mWaveInfo.eleFaceRad(), SignalCore::DefClutterMemoryMng::ClutterType::TStatic,
+                                         ptr->head->mWaveInfo.pulseAmount(),  ptr->head->mWaveInfo.sampleNbr()),
+                                     SignalCore::DefClutterMemoryMng::GetInstance()->getClutter( ptr->head->arraynbr,
+                                             ptr->head->mWaveInfo.aziFaceRad(), ptr->head->mWaveInfo.eleFaceRad(),
+                                             SignalCore::DefClutterMemoryMng::ClutterType::TDynamic,
+                                             ptr->head->mWaveInfo.pulseAmount(), ptr->head->mWaveInfo.sampleNbr())
+                                    );
+    }
     free(data);
     return 0x00;
 }

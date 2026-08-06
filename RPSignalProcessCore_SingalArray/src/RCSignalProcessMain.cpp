@@ -44,29 +44,29 @@ void RCSignalProcessMain::ResRelease()
     this->thread()->wait();
 }
 quint16 cycle_t = 0;
-void debug_dotpara(IRadar_V4_1::SpPointWithMTD dot_tmp, qint32 reservedWidth = 0)
+void debug_dotpara(IRadarV51::SignalProcPoint dot_tmp, qint32 reservedWidth = 0)
 {
     QString str;
     //str += QString("[timeStamp:%0]").arg(timeStamp, 6 + reservedWidth, 10, QLatin1Char(' '));
-    str += QString("[R:%0]").arg(dot_tmp.SpPnt.range, 8 + reservedWidth, 'f', 1, QLatin1Char(' '));
-    str += QString("[azi:%0]").arg(dot_tmp.SpPnt.azimuth, 6 + reservedWidth, 'f', 2, QLatin1Char(' '));
-    str += QString("[ele:%0]").arg(dot_tmp.SpPnt.elevation, 6 + reservedWidth, 'f', 2, QLatin1Char(' '));
+    str += QString("[R:%0]").arg(dot_tmp.range_array, 8 + reservedWidth, 'f', 1, QLatin1Char(' '));
+    str += QString("[azi:%0]").arg(dot_tmp.azimuth_array, 6 + reservedWidth, 'f', 2, QLatin1Char(' '));
+    str += QString("[ele:%0]").arg(dot_tmp.elevation_array, 6 + reservedWidth, 'f', 2, QLatin1Char(' '));
     //str += QString("[rng_resolution:%0]").arg(rng_resolution, 8 + reservedWidth, 'f', 1, QLatin1Char(' '));
     //str += QString("[azi_resolution:%0]").arg(azi_resolution, 8 + reservedWidth, 'f', 1, QLatin1Char(' '));
     //str += QString("[ele_resolution:%0]").arg(ele_resolution, 8 + reservedWidth, 'f', 1, QLatin1Char(' '));
     //str += QString("[dop_resolution:%0]").arg(dop_resolution, 8 + reservedWidth, 'f', 1, QLatin1Char(' '));
-    str += QString("[V:%0]").arg(dot_tmp.SpPnt.velocity, 6 + reservedWidth, 'f', 1, QLatin1Char(' '));
-    str += QString("[A:%0]").arg(dot_tmp.SpPnt.amplitude, 10 + reservedWidth, 'f', 0, QLatin1Char(' '));
-    str += QString("[Ra:%0]").arg(dot_tmp.SpPnt.aziRatio, 6 + reservedWidth, 'f', 2, QLatin1Char(' '));
-    str += QString("[Re:%0]").arg(dot_tmp.SpPnt.eleRatio, 6 + reservedWidth, 'f', 2, QLatin1Char(' '));
+    str += QString("[V:%0]").arg(dot_tmp.velocity, 6 + reservedWidth, 'f', 1, QLatin1Char(' '));
+    str += QString("[A:%0]").arg(dot_tmp.amplitude, 10 + reservedWidth, 'f', 0, QLatin1Char(' '));
+    str += QString("[Ra:%0]").arg(dot_tmp.aziRatio, 6 + reservedWidth, 'f', 2, QLatin1Char(' '));
+    str += QString("[Re:%0]").arg(dot_tmp.eleRatio, 6 + reservedWidth, 'f', 2, QLatin1Char(' '));
     //str += QString("[f:%0]").arg(FrequencyCode, 6 + reservedWidth, 10, QLatin1Char(' '));
-    str += QString("[Ia:%0]").arg(dot_tmp.SpPnt.I_azi, 6 + reservedWidth, 'f', 2, QLatin1Char(' '));
-    str += QString("[Qa:%0]").arg(dot_tmp.SpPnt.Q_azi, 6 + reservedWidth, 'f', 2, QLatin1Char(' '));
-    str += QString("[Ie:%0]").arg(dot_tmp.SpPnt.I_ele, 6 + reservedWidth, 'f', 2, QLatin1Char(' '));
-    str += QString("[Qe:%0]").arg(dot_tmp.SpPnt.Q_ele, 6 + reservedWidth, 'f', 2, QLatin1Char(' '));
-    str += QString("[RCS:%0]").arg(dot_tmp.SpPnt.RCS, 8 + reservedWidth, 'f', 1, QLatin1Char(' '));
-    str += QString("[bca:%0]").arg(dot_tmp.SpPnt.bcAzi, 6 + reservedWidth, 'f', 2, QLatin1Char(' '));
-    str += QString("[bce:%0]").arg(dot_tmp.SpPnt.bcEle, 6 + reservedWidth, 'f', 2, QLatin1Char(' '));
+    str += QString("[Ia:%0]").arg(dot_tmp.I_azi, 6 + reservedWidth, 'f', 2, QLatin1Char(' '));
+    str += QString("[Qa:%0]").arg(dot_tmp.Q_azi, 6 + reservedWidth, 'f', 2, QLatin1Char(' '));
+    str += QString("[Ie:%0]").arg(dot_tmp.I_ele, 6 + reservedWidth, 'f', 2, QLatin1Char(' '));
+    str += QString("[Qe:%0]").arg(dot_tmp.Q_ele, 6 + reservedWidth, 'f', 2, QLatin1Char(' '));
+    str += QString("[RCS:%0]").arg(dot_tmp.RCS, 8 + reservedWidth, 'f', 1, QLatin1Char(' '));
+    str += QString("[bca:%0]").arg(dot_tmp.beamAzimuth, 6 + reservedWidth, 'f', 2, QLatin1Char(' '));
+    str += QString("[bce:%0]").arg(dot_tmp.beamElevation, 6 + reservedWidth, 'f', 2, QLatin1Char(' '));
     //str += QString("[searchOrTrack:%0]").arg(searchOrTrack, 6 + reservedWidth, 10, QLatin1Char(' '));
     //str += QString("[waveCode:%0]").arg(waveCode, 6 + reservedWidth, 10, QLatin1Char(' '));
     //str += QString("[pw:%0]").arg(pw, 8 + reservedWidth, 'f', 1, QLatin1Char(' '));
@@ -93,7 +93,7 @@ void RCSignalProcessMain::work(const SP_para I_SP,
     unsigned char* bool_data_h = (unsigned char*)malloc(sizeof(unsigned char) * PulseLenMTDNum);// = (DianJi_para_t*)malloc(sizeof(DianJi_para_t) * MAX_DOTS_NUM);
     DianJi_para_t DianJi_para_h;
     cudaSetDevice(targetDevice);
-//    qDebug() << I_dataFromDataPar->head->mTrkingInfo.Purpose;
+    QDateTime currentTime = QDateTime::currentDateTime();
     this->signalProcess(I_dataFromDataPar, clutterStatic, clutterDynamic);
     CHECK_CUDA(cudaMemcpy(bool_data_h, bool_data, sizeof(unsigned char) * PulseLenMTDNum, cudaMemcpyDeviceToHost));
     CHECK_CUDA(cudaMemcpy(mtd_abs_sum_on_cpu, mtd_abs_sum, sizeof(float) * PulseLenMTDNum, cudaMemcpyDeviceToHost));
@@ -103,7 +103,8 @@ void RCSignalProcessMain::work(const SP_para I_SP,
         {
             CHECK_CUDA(cudaMemcpy(&DianJi_para_h, (DianJi_para_t*)DianJi_para + i,
                                   sizeof(DianJi_para_t), cudaMemcpyDeviceToHost));
-//            if (fabs(DianJi_para_h.aziRatio) <= 1 && fabs(DianJi_para_h.eleRatio) <= 1)
+            if (fabs(DianJi_para_h.aziRatio) <= 1 && fabs(DianJi_para_h.eleRatio) <= 1)
+//         if(1)
             {
                 IRadarV51::SignalProcPoint dot_tmp;
                 dot_tmp.timeStamp        = I_dataFromDataPar->head->mWaveInfo.timeStampMs();
@@ -153,7 +154,7 @@ void RCSignalProcessMain::work(const SP_para I_SP,
                         break;
                     case (int)Common::ParseCoreType::RadarCF_ZT:
                         dot_tmp.velocity     = -DianJi_para_h.velocity;
-                        dot_tmp.range_array        = DianJi_para_h.range - 27.0;
+                        dot_tmp.range_array        = DianJi_para_h.range;
                         dot_tmp.azimuth_array      = data_pack_para_current.bc_azi +
                                                      SAmpRatioInquire::GetInstance(I_dataFromDataPar->head->radarIndex)
                                                      ->inquireAziDeg(I_dataFromDataPar->head->mWaveInfo.mRadarFreq,
@@ -174,6 +175,7 @@ void RCSignalProcessMain::work(const SP_para I_SP,
                 // 将原始点迹添加到列表
                 dot_tmp.MtdClsResult = IRadarV51::TargetSubTypeV5::MultiRotorUav;//TODO:后期修改为真实的识别结果
                 pointLst.push_back(dot_tmp);
+//                debug_dotpara(dot_tmp);
                 // 将包含MTD数据的点迹添加到MTD点迹列表
                 if (DianJi_para_h.amplitude > tmpAmplitude)
                 {
@@ -220,18 +222,17 @@ void RCSignalProcessMain::calculateRCS(IRadarV51::SignalProcPoint& dot_tmp)
     AD_Pr = 10 * log(V_AD * V_AD / 50 * 1000);
     Pr_0 = AD_Pr - L_pz - L_dzf;
     dot_tmp.RCS = pow(dot_tmp.range_array, 4) * pow(4 * M_PI, 3) * pow(dot_tmp.amplitude / (50 * wave_para_current.pw_us) / wave_para_current.pulse_number / pow(10, 74.0 / 10.0 / 2.0) / pow(2, 15) * 1.3 * 1.4, 2) * 0.01 * 6.310 /
-                  (484.57 * pow(10, (32.7221 / 10.0)) * pow(10, (31.9221 / 10.0)) * Fazi_t* Fele_t* Fazi_r* Fele_r * pow(cos(dot_tmp.azimuth_array * M_PI / 180) * cos(dot_tmp.elevation_array * M_PI / 180), 2) * lambda * lambda) * 4;
+                  (484.57 * pow(10, (32.7221 / 10.0)) * pow(10, (31.9221 / 10.0)) * Fazi_t* Fele_t* Fazi_r * Fele_r * pow(cos(dot_tmp.azimuth_array * M_PI / 180) * cos(dot_tmp.elevation_array * M_PI / 180), 2) * lambda * lambda) * 4;
 }
 
 bool RCSignalProcessMain::fillPcAndMtdExportData(IRadarV51::SignalProcPoint& dot_tmp,
-                                                 quint32 pointIndex,
-                                                 shared_ptr<RawData2SP> I_dataFromDataPar,
-                                                 int DotNum)
+        quint32 pointIndex,
+        shared_ptr<RawData2SP> I_dataFromDataPar,
+        int DotNum)
 {
     const bool savePcEcho = SignalCore::GlobalVal::GetInstance()->getSavePcEcho();
     const bool saveMtdEcho = SignalCore::GlobalVal::GetInstance()->getSaveMtdEcho();
     const quint32 M_Range = pointIndex;
-
     if(savePcEcho)
     {
         int mRange = M_Range % wave_para_current.pulse_length;
@@ -282,7 +283,6 @@ bool RCSignalProcessMain::fillPcAndMtdExportData(IRadarV51::SignalProcPoint& dot
         memcpy(extracted_mtd_data + dst_start, mtd_part_cpu + start, (end - start + 1) * sizeof(cuComplex));
         int extract_length = 129;
         dot_tmp.mtdData.resize(2 * extract_length * 1);
-
         dot_tmp.mtdRows = 1;
         dot_tmp.mtdCols = extract_length;
         dot_tmp.mtdChannels = 2;
@@ -292,12 +292,10 @@ bool RCSignalProcessMain::fillPcAndMtdExportData(IRadarV51::SignalProcPoint& dot
             dot_tmp.mtdData[dataIndex * 2]     = extracted_mtd_data[dataIndex].x;
             dot_tmp.mtdData[dataIndex * 2 + 1] = extracted_mtd_data[dataIndex].y;
         }
-
         free(extracted_mtd_data);//2026-0626
         free(mtd_part_cpu);
         extracted_mtd_data = nullptr;
         mtd_part_cpu = nullptr;
-
         std::vector<char> buffer;
         buffer.insert(buffer.end(), (char*)&dot_tmp.frequency, (char*)&dot_tmp.frequency + sizeof(float));
         buffer.insert(buffer.end(), (char*)&dot_tmp.amplitude, (char*)&dot_tmp.amplitude + sizeof(float));
@@ -314,7 +312,6 @@ bool RCSignalProcessMain::fillPcAndMtdExportData(IRadarV51::SignalProcPoint& dot
                            .arg(DotNum);
 //        SaveData( buffer.data(), buffer.size(), filename);
     }
-
     return savePcEcho || saveMtdEcho;
 }
 
@@ -426,17 +423,6 @@ void RCSignalProcessMain::signalProcess(shared_ptr<RawData2SP> I_dataFromDataPar
     convertIntToCuComplex(echo_data_sum_int, echo_data_sum, wave_para_current);
     convertIntToCuComplex(echo_data_azi_int, echo_data_azi, wave_para_current);
     convertIntToCuComplex(echo_data_ele_int, echo_data_ele, wave_para_current);
-//    if(abs(I_dataFromDataPar->head->mWaveInfo.mAziFaceRad * 180 / M_PI) < 5 && I_dataFromDataPar->head->mWaveInfo.mEleFaceRad * 180 / M_PI > 20)
-//    {
-//        size_t size_element = pulse_length * pulse_number * sizeof(cuComplex);
-//        cuComplex* data_sum = (cuComplex*)malloc(size_element);
-//        CHECK_CUDA(cudaMemcpy(data_sum, echo_data_sum, size_element, cudaMemcpyDeviceToHost));
-//        QDateTime currentTime = QDateTime::currentDateTime();
-//        QString filename = QString("./debug/datasave/%0.dat")
-//                           .arg(currentTime.toString("yyyy年MM月dd日hh时mm分ss秒-zzz"));
-//        SaveData(reinterpret_cast<char*>(data_sum), size_element, filename);
-//    }
-    //qDebug() << pulse_length << pulse_number;
     //**********************************************************************************/ /
     //                                    平台速度补偿                                     //
     //**********************************************************************************//
@@ -446,14 +432,10 @@ void RCSignalProcessMain::signalProcess(shared_ptr<RawData2SP> I_dataFromDataPar
     //**********************************************************************************/ /
     //                                       脉压                                        //
     //**********************************************************************************//
-    //和通道
-    // 将每个脉冲的时域回波从 pulse_length 零填充到 fft_length，便于后续在频域完成线性卷积形式的脉压。
+    //
     pad_pc_data((float*)echoCompensationSum, (float*)padded_echo_data_sum, pulse_length, pulse_number, fft_length);
-    // 对零填充后的回波按脉冲逐条做一维 FFT，把数据从时域变换到频域。
     pulsecompress_fft_gpu(padded_echo_data_sum, echo_fft_data_sum, wave_para_current);
-    // 在频域内与当前波形对应的脉压参考系数相乘，本质上等价于做匹配滤波。
     pulse_compress(echo_fft_data_sum, pc_fft_data_sum, pc_coel_wave[wave_para_current.waveCode], pulse_number, fft_length);
-    // 对频域匹配滤波结果做 IFFT，恢复到时域，得到脉压后的距离向复数回波。
     pulsecompress_ifft_gpu(pc_fft_data_sum, pc_data_sum, wave_para_current);
     //方位差 ----------------------------------------------------------------------------------------
     pad_pc_data((float*)echoCompensationAzi, (float*)padded_echo_data_azi, pulse_length, pulse_number, fft_length);

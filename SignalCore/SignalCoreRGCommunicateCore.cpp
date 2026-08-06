@@ -198,7 +198,7 @@ namespace SignalCore
             }
 //            将阵面坐标系旋转为站心坐标系
             PointRAE arrayRae(1, v.azimuth_array, v.elevation_array);
-            auto station_xyz =  Array2Station( RAE2xyz(arrayRae), Attitude(echoInfo->head->mArrayAttitude) * -1 );
+            auto station_xyz =  Array2Station( Array2Station(  RAE2xyz(arrayRae), Attitude(echoInfo->head->mArrayAttitude) * -1 ),echoInfo->head->mInertialNavAttitude * -1);
             auto station_rae = xyz2RAE( station_xyz);
             v.azimuth_station = station_rae.A;
             v.elevation_station = station_rae.E;

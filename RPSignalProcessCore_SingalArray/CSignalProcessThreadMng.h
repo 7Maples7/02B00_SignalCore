@@ -63,6 +63,7 @@ public:
 public:
 
 private:
+    bool validateReceivedData(const RawData2SPHead* head, int size) const;
     void run();
     void RFWaveReloadCheck()
     {

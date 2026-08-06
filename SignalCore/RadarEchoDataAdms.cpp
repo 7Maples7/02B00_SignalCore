@@ -253,7 +253,7 @@ namespace SignalCore
                 echoInfoDetail.dronEleArray = rad2deg(rae.E);
             }
             int raw_data_size = raw_info->sizeSingalChannel() * 3;
-            echoInfoDetail.radarZTDirect = raw_info->head->mInertialNavAttitude.yaw;//转台指向
+//            echoInfoDetail.radarZTDirect = raw_info->head->mInertialNavAttitude.yaw;//转台指向
             if( raw_data_size < 20 * 1024 * 1024 )
             {
                 dataSaveInfo.mRadarEchoData.append(reinterpret_cast<char*>( &echoInfoDetail ), sizeof( EchoSaveHeader ));

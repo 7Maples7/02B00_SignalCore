@@ -154,14 +154,6 @@ namespace SignalCore
     shared_ptr<DefClutterMemory> DefClutterMemoryMng::getClutter(int arrayIdx, float bc_azi_rad,
             float bc_ele_rad, DefClutterMemoryMng::ClutterType type, int pulseNbr, int sampleNbr)
     {
-        if(radarClutterStatic.size() >= 1000)
-        {
-            qDebug() << "杂波图数量过大" << radarClutterStatic.size();
-        }
-        if(radarClutterDynamic.size() >= 1000)
-        {
-            qDebug() << "杂波图数量过大" << radarClutterDynamic.size();
-        }
         QMap<WaveIndex, shared_ptr< DefClutterMemory> >* map = nullptr;
         switch (type)
         {
