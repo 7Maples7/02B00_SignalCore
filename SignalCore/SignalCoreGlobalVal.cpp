@@ -1,4 +1,5 @@
 #include "SignalCoreGlobalVal.h"
+#include "SignalCoreGlobalSignal.h"
 namespace SignalCore
 {
     SignalCoreGlobalVal::SignalCoreGlobalVal()
@@ -31,7 +32,7 @@ namespace SignalCore
         }
         this->occupySoftwareName()->value = IRadarV51::UniversalDataHeader::software_category_from_str("02B00");
         this->occupySoftwareVersionP()->fields.main_ver = 0x01;
-        this->occupySoftwareVersionP()->fields.sub_ver = 14;
+        this->occupySoftwareVersionP()->fields.sub_ver = 15;
     }
 
     SignalCoreGlobalVal::~SignalCoreGlobalVal()
@@ -57,7 +58,7 @@ namespace SignalCore
         {
             mWaveSaveLongTime.array.clear();
         }
-        mRadarDataSaveInfo.mIsSaveRawData = 0;
+        mRadarDataSaveInfo.mIsSaveRawData = 0; // 软件每次启动均强制关闭回波录取，避免沿用上次运行的保存状态。
         // 允许配置为 0，表示仅导出目标中心距离单元/中心脉冲位置。
         if(mExportRangeHalfWidth < 0)
         {
@@ -74,6 +75,7 @@ namespace SignalCore
 //        mDataSubThemeLst.array[2].topic = "RadarCtrl";
         mDataSubThemeLst.array[mDataSubThemeLst.array.size()].topic = "/config/down/FF000";
         mDataSubThemeLst.array[mDataSubThemeLst.array.size()].topic = "/config/down/03C00";
+        mDataSubThemeLst.array[mDataSubThemeLst.array.size()].topic = "/config/down/02B00";
         for(auto v : mDataSubThemeLst.array.values())
         {
             mThemeRecv[v.topic.toStdString()] = true;
@@ -95,6 +97,8 @@ namespace SignalCore
         MacSaveConfig(int, mExportRangeHalfWidth, "导出距离半宽");
         MacSaveConfig(int, mExportTimePulseHalfLen, "导出时域脉冲半长");
     }
+
+
 
     void SignalCoreGlobalVal::LoadConfigFrm(QString fileName)
     {

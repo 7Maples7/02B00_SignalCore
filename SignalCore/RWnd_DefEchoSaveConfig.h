@@ -3,6 +3,7 @@
 #include<RMModuleRewriting>
 #include<QWidget>
 #include"SignalCoreDefine.h"
+#include"SignalCoreGlobalSignal.h"
 #include<RGTimeSystem.h>
 namespace SignalCore
 {
@@ -12,6 +13,16 @@ namespace SignalCore
     public:
         RWnd_DefEchoSaveConfig(DefEchoSaveConfig* par, QWidget* parent  = nullptr, QString title = "");
         bool variableApplication() ;
+        /**
+         * @brief 连接回波数据录取窗口的内部信号。
+         * @details 接收全局配置刷新信号并在窗口线程更新控件，同时保留本地控件修改配置的既有连接。
+         * @return true 表示信号连接已建立。
+         * @ref
+         * @date      2026-08-18 00:00:00
+         * @author    roiade
+         * @see
+         * @note
+         */
         bool internalSignalConnect();
         bool exec() ;
         void RFSendSignals();

@@ -90,6 +90,10 @@ bool RWnd_DefEchoSaveConfig::variableApplication()
 
 bool RWnd_DefEchoSaveConfig::internalSignalConnect()
 {
+    connect(GlobalSignal::GetInstance(),
+            &GlobalSignal::SignalEchoDataCaptureConfigRefresh,
+            this,
+            &RWnd_DefEchoSaveConfig::update);
     /********************| 是否保存 |********************/
     connect(this->mIsSaveRawData_RCheckBox, &RCheckBox::clicked, [this](bool checked )
     {

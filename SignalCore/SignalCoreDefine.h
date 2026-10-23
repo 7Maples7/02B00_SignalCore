@@ -10,6 +10,21 @@
 namespace SignalCore
 {
 
+    /**
+     * @brief 回波数据录取配置通信协议类型。
+     * @details Query、Report、Command、Confirm 组成完整配置闭环，协议号仅在 SignalCore 软件内使用。
+     * @date      2026-08-18 00:00:00
+     * @author    roiade
+     * @note
+     */
+    enum class ProdectProtocolType : uint16_t
+    {
+        EchoDataCaptureConfigQuery = 0x0225,   /**< 查询当前生效的回波数据录取配置。 */
+        EchoDataCaptureConfigReport = 0x0226,  /**< 上报当前生效的回波数据录取配置。 */
+        EchoDataCaptureConfigCommand = 0x0227, /**< 下发完整的回波数据录取配置快照。 */
+        EchoDataCaptureConfigConfirm = 0x0228  /**< 返回回波数据录取配置处理结果。 */
+    };
+
     struct DefReplayInfo
     {
         QString db_path;
@@ -27,11 +42,33 @@ namespace SignalCore
         double    azi_deg_max    = 0x00 ;
         double    ele_deg_min    = 0x00 ;
         double    ele_deg_max    = 0x00 ;
-        QString   rootFolder     = "./" ; //原始数据保存根目录
+        QString   rootFolder     = "./dataSave/信号处理回波保存/" ; //原始数据保存根目录
         bool isAngleInScope(double azi_rad, double ele_rad);
         int isDronInScope(PointRAE /*dronLoc*/, double /*azi_rad*/, double /*ele_rad*/ );
 
+        /**
+         * @brief 将回波数据录取配置转换为 JSON 对象。
+         * @details 输出字段与网页配置服务使用的 settings 对象保持一致，其中 mIsSaveRawData 为设备生成的启用时间戳或 0。
+         * @return 包含完整回波数据录取配置的 JSON 对象。
+         * @ref
+         * @date      2026-08-18 00:00:00
+         * @author    roiade
+         * @see
+         * @note
+         */
         QJsonObject toJsonObj();
+
+        /**
+         * @brief 从 JSON 对象更新回波数据录取配置。
+         * @details 仅更新 JSON 中存在的字段；启用时间戳按 64 位整数读取，避免长时间运行后重启加载时发生截断。
+         * @param[in] obj 包含回波数据录取配置字段的 JSON 对象。
+         * @return 无。
+         * @ref
+         * @date      2026-08-18 00:00:00
+         * @author    roiade
+         * @see
+         * @note
+         */
         void fromJson(QJsonObject obj);
         MacFuncJsonDataOp
 

@@ -29,6 +29,19 @@ namespace SignalCore
         virtual void LoadConfig() override;
         virtual void SaveConfig() override;
 
+        /**
+         * @brief 持久化并生效回波数据录取配置。
+         * @details 先将候选配置写入当前配置数据库；仅写入成功后才替换内存中的生效配置，避免持久化失败时改变运行行为。
+         * @param[in] config 已完成业务校验的完整回波数据录取配置。
+         * @return 0 表示持久化并生效成功；非 0 表示数据库写入失败。
+         * @ref
+         * @date      2026-08-18 00:00:00
+         * @author    roiade
+         * @see
+         * @note
+         */
+        int ApplyEchoDataCaptureConfig(const DefEchoSaveConfig& config);
+
         void LoadConfigFrm(QString fileName);
         void SaveConfigAs(QString fileName);
         // BuildStatus interface

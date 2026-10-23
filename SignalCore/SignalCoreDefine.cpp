@@ -46,7 +46,7 @@ namespace SignalCore
     {
         if(obj.contains("mIsSaveRawData"))
         {
-            this->mIsSaveRawData = obj.value("mIsSaveRawData").toInt();
+            this->mIsSaveRawData = obj.value("mIsSaveRawData").toVariant().toLongLong();
         }
         if(obj.contains("mDataSaveBy"))
         {
@@ -154,6 +154,23 @@ namespace SignalCore
     shared_ptr<DefClutterMemory> DefClutterMemoryMng::getClutter(int arrayIdx, float bc_azi_rad,
             float bc_ele_rad, DefClutterMemoryMng::ClutterType type, int pulseNbr, int sampleNbr)
     {
+        arrayIdx = 1;
+//        qDebug() << bc_azi_rad << bc_ele_rad << radarClutterStatic.size() ;
+        if(radarClutterStatic.size() >= 8000)
+        {
+            qDebug() << "杂波图数量过大" << radarClutterStatic.size();
+            SaveData(QByteArray(), "./log/wave_error.log");
+            for(auto v : radarClutterStatic.keys())
+            {
+                auto str = v.toStr() + "\n";
+                SaveDataAppend(str.toUtf8(), "./log/wave_error.log");
+            }
+            exit(-1);
+        }
+        if(radarClutterDynamic.size() >= 8000)
+        {
+            qDebug() << "杂波图数量过大" << radarClutterDynamic.size();
+        }
         QMap<WaveIndex, shared_ptr< DefClutterMemory> >* map = nullptr;
         switch (type)
         {

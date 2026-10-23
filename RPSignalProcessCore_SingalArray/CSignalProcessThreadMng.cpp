@@ -273,14 +273,18 @@ int CSignalProcessThreadMng::RFReadShareMemory(char* data, int size)
                 if(ptr->head->radarType == (int)Common::ParseCoreType::RadarCF_ZT)
                 {
                     //ZT_CF Use New Clutter
+//                    qDebug() << ptr->head->mBeamCode;
+                    int azi_idx = ptr->head->mBeamCode;// int(rad2deg( ptr->head->mWaveInfo.aziStationRad()) );
+                    int ele_idx =  ptr->head->mBeamCode;//int(rad2deg(ptr->head->mWaveInfo.eleStationRad()));
+//                    qDebug() << azi_idx << ele_idx << ptr->head->mBeamCode;
                     flg =  mSpProcCore->RFSignalProcess(points,
                                                         SignalCore::DefClutterMemoryMng::GetInstance()->getClutter(
-                                                            ptr->head->mBeamCode, float(ptr->head->mBeamCode),
-                                                            float(ptr->head->mBeamCode), SignalCore::DefClutterMemoryMng::ClutterType::TStatic,
+                                                            head->arraynbr, float(azi_idx),
+                                                            float(ele_idx), SignalCore::DefClutterMemoryMng::ClutterType::TStatic,
                                                             ptr->head->mWaveInfo.pulseAmount(),  ptr->head->mWaveInfo.sampleNbr()),
                                                         SignalCore::DefClutterMemoryMng::GetInstance()->getClutter(
-                                                            ptr->head->mBeamCode, float(ptr->head->mBeamCode),
-                                                            float(ptr->head->mBeamCode), SignalCore::DefClutterMemoryMng::ClutterType::TDynamic,
+                                                            head->arraynbr, float(azi_idx),
+                                                            float(ele_idx), SignalCore::DefClutterMemoryMng::ClutterType::TDynamic,
                                                             ptr->head->mWaveInfo.pulseAmount(), ptr->head->mWaveInfo.sampleNbr())
                                                        );
                 }

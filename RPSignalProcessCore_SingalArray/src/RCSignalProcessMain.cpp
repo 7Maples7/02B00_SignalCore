@@ -93,6 +93,7 @@ void RCSignalProcessMain::work(const SP_para I_SP,
     unsigned char* bool_data_h = (unsigned char*)malloc(sizeof(unsigned char) * PulseLenMTDNum);// = (DianJi_para_t*)malloc(sizeof(DianJi_para_t) * MAX_DOTS_NUM);
     DianJi_para_t DianJi_para_h;
     cudaSetDevice(targetDevice);
+//    qDebug() << I_dataFromDataPar->head->mWaveInfo.mAziStationRad;
     QDateTime currentTime = QDateTime::currentDateTime();
     this->signalProcess(I_dataFromDataPar, clutterStatic, clutterDynamic);
     CHECK_CUDA(cudaMemcpy(bool_data_h, bool_data, sizeof(unsigned char) * PulseLenMTDNum, cudaMemcpyDeviceToHost));
@@ -154,7 +155,7 @@ void RCSignalProcessMain::work(const SP_para I_SP,
                         break;
                     case (int)Common::ParseCoreType::RadarCF_ZT:
                         dot_tmp.velocity     = -DianJi_para_h.velocity;
-                        dot_tmp.range_array        = DianJi_para_h.range;
+                        dot_tmp.range_array        = DianJi_para_h.range - 30.0;
                         dot_tmp.azimuth_array      = data_pack_para_current.bc_azi +
                                                      SAmpRatioInquire::GetInstance(I_dataFromDataPar->head->radarIndex)
                                                      ->inquireAziDeg(I_dataFromDataPar->head->mWaveInfo.mRadarFreq,

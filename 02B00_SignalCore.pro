@@ -6,10 +6,10 @@ CONFIG += c++14
 
 
 QT514_DIR = /opt/Qt5.14.2/5.14.2/gcc_64
-INCLUDEPATH += $$QT514_DIR/include                $$QT514_DIR/include/QtCore                $$QT514_DIR/include/QtGui                $$QT514_DIR/include/QtWidgets                $$QT514_DIR/include/QtNetwork                $$QT514_DIR/include/QtSql                $$QT514_DIR/include/QtPrintSupport
+INCLUDEPATH += $$QT514_DIR/include
 QMAKE_LIBDIR += $$QT514_DIR/lib
 QMAKE_RPATHDIR += $$QT514_DIR/lib
-LIBS += -L$$QT514_DIR/lib         $$QT514_DIR/lib/libQt5PrintSupport.so         $$QT514_DIR/lib/libQt5Widgets.so         $$QT514_DIR/lib/libQt5Gui.so         $$QT514_DIR/lib/libQt5Sql.so         $$QT514_DIR/lib/libQt5Network.so         $$QT514_DIR/lib/libQt5Core.so
+LIBS += -L$$QT514_DIR/lib
 
 
 

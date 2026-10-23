@@ -21,6 +21,7 @@ namespace SignalCore
         void SignalSpeedRead(double speed);
         void SignalSpeedSend(double speed);
         void SignalSoftwareErrorQuit();
+        void SignalEchoDataCaptureConfigRefresh();
         //回放
         void SignalReplayInfo(QString path, int64_t id, int version);
         void SignalRestart();

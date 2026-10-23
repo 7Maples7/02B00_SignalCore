@@ -25,8 +25,20 @@ namespace SignalCore
         ~SignalCoreRGCommunicateCore();
 
     public:
-        /** @brief 外界数据输入接口，需要处理好多线程数据安全   2024-10-04 20:50:51 .*/
-        void RFReadDataPragram( char* /*data*/, int /*size*/, std::string /*theme*/ );
+        /**
+         * @brief 接收并分派外部通信数据。
+         * @details 除既有通用消息处理外，负责处理回波数据录取配置的 Query 和 Command，完成报文校验、配置持久化、生效和响应发送。
+         * @param[in] data 输入报文首地址。
+         * @param[in] size 输入报文长度，单位为字节。
+         * @param[in] theme 接收主题。
+         * @return 无。
+         * @ref
+         * @date      2026-08-18 00:00:00
+         * @author    roiade
+         * @see
+         * @note
+         */
+        void RFReadDataPragram(char* data, int size, std::string theme);
         /** @brief 数据写入接口   2024-10-06 17:01:32 .*/
         int64_t RFWriteDataPragram( char* data, int size, std::string theme );
         void    setWriteDataPragram(const function<int64 (char* data, int size, std::string theme)>& writeDataPragram);
