@@ -1,5 +1,3 @@
-#include <sys/time.h>
-
 #ifndef _COMMON_H
 #define _COMMON_H
 
@@ -63,13 +61,5 @@
             exit(1);                                                               \
         }                                                                          \
     }
-
-inline double cuda_seconds()
-{
-    struct timeval tp;
-    struct timezone tzp;
-    gettimeofday(&tp, &tzp);
-    return ((double)tp.tv_sec + (double)tp.tv_usec * 1.e-6);
-}
 
 #endif // _COMMON_H

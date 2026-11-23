@@ -9,9 +9,16 @@
 #if CUDART_VERSION >= 13000
 static NppStreamContext BuildDefaultNppStreamContext()
 {
-    NppStreamContext ctx{};
+    static thread_local int cachedDeviceId = -1;
+    static thread_local NppStreamContext cachedContext{};
     int deviceId = 0;
     cudaGetDevice(&deviceId);
+    if (cachedDeviceId == deviceId)
+    {
+        return cachedContext;
+    }
+
+    NppStreamContext ctx{};
     ctx.hStream = 0;
     ctx.nCudaDeviceId = deviceId;
 
@@ -28,7 +35,9 @@ static NppStreamContext BuildDefaultNppStreamContext()
     cudaStreamGetFlags(0, &streamFlags);
     ctx.nStreamFlags = streamFlags;
     ctx.nReserved0 = 0;
-    return ctx;
+    cachedContext = ctx;
+    cachedDeviceId = deviceId;
+    return cachedContext;
 }
 #endif
 
@@ -984,6 +993,35 @@ void pad_pc_data(float* src_echo_data, float* dst_data, unsigned int width , uns
     return;
 }
 
+__global__ void pad_pc_data_three_kernel(const cuComplex* sum, const cuComplex* azi,
+                                         const cuComplex* ele, cuComplex* dst,
+                                         unsigned int width, unsigned int height,
+                                         unsigned int border_width)
+{
+    const unsigned int col = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int row = blockIdx.y * blockDim.y + threadIdx.y;
+    if (col >= border_width || row >= 3 * height)
+    {
+        return;
+    }
+
+    cuComplex value = make_cuComplex(0.0f, 0.0f);
+    if (col < width)
+    {
+        const cuComplex* src = row < height ? sum : (row < 2 * height ? azi : ele);
+        value = src[(row % height) * width + col];
+    }
+    dst[row * border_width + col] = value;
+}
+
+void pad_pc_data_three(const cuComplex* sum, const cuComplex* azi, const cuComplex* ele,
+                       cuComplex* dst, unsigned int width, unsigned int height, unsigned int border_width)
+{
+    dim3 threads(BLOCK_2DIM, BLOCK_2DIM);
+    dim3 blocks(iDivUp(border_width, BLOCK_2DIM), iDivUp(3 * height, BLOCK_2DIM));
+    pad_pc_data_three_kernel<<<blocks, threads>>>(sum, azi, ele, dst, width, height, border_width);
+}
+
 __global__ void pulse_compress_kernal(cuComplex* src_data, cuComplex* coel_data, cuComplex* dst_data, int width, int height)
 {
     int c = blockDim.x * blockIdx.x + threadIdx.x;
@@ -1032,7 +1070,10 @@ __global__ void SPWeighedMeanFilStep2Kernal(cuComplex* InData, cuComplex* OutDat
 {
     int c = blockDim.x * blockIdx.x + threadIdx.x;
     int r;
-
+    if(c >= width)
+    {
+        return;
+    }
     for(r = 0; r < height; r++)
     {
         OutData[c].x += InData[r*width + c].x;
@@ -1390,6 +1431,64 @@ __global__ void plot_centroid_neighbour_range_kernel(unsigned char *bool_data,fl
     }
 }
 
+__global__ void plot_centroid_neighbour_range_shared_kernel(unsigned char* bool_data,
+        const float* mtd_abs_sum, unsigned int width, unsigned int height)
+{
+    const unsigned int row = blockIdx.x;
+    if(row >= height)
+    {
+        return;
+    }
+
+    extern __shared__ __align__(4) unsigned char row_data[];
+    unsigned char* flags = row_data;
+    const unsigned int aligned_width = (width + 3u) & ~3u;
+    float* amplitudes = reinterpret_cast<float*>(row_data + aligned_width);
+    const unsigned int offset = row * width;
+
+    for(unsigned int col = threadIdx.x; col < width; col += blockDim.x)
+    {
+        flags[col] = bool_data[offset + col];
+        amplitudes[col] = mtd_abs_sum[offset + col];
+    }
+    __syncthreads();
+
+    if(threadIdx.x == 0)
+    {
+        for(unsigned int col = 0; col + 2 < width; ++col)
+        {
+            if(flags[col] == 1 && flags[col + 1] == 1)
+            {
+                if(amplitudes[col] > amplitudes[col + 1])
+                {
+                    flags[col + 1] = 0;
+                }
+                else
+                {
+                    flags[col] = 0;
+                }
+            }
+            if(flags[col] == 1 && flags[col + 2] == 1)
+            {
+                if(amplitudes[col] > amplitudes[col + 2])
+                {
+                    flags[col + 2] = 0;
+                }
+                else
+                {
+                    flags[col] = 0;
+                }
+            }
+        }
+    }
+    __syncthreads();
+
+    for(unsigned int col = threadIdx.x; col < width; col += blockDim.x)
+    {
+        bool_data[offset + col] = flags[col];
+    }
+}
+
 //速度维点迹凝聚
 //门限点取幅度最高
 __global__ void plot_centroid_neighbour_velocity_kernel(unsigned char *bool_data,float* mtd_abs_sum, unsigned int width , unsigned int height)
@@ -1444,7 +1543,17 @@ void plot_centroid_neighbour(unsigned char *bool_data,float* mtd_abs_sum,unsigne
     dim3 threads_per_block(BLOCK_DIM, 1, 1);
 
     //距离维凝聚
-    plot_centroid_neighbour_range_kernel <<< blocks_num1, threads_per_block>>> (bool_data, mtd_abs_sum, width , height);
+    if(width <= 4096 && height > 0)
+    {
+        const unsigned int aligned_width = (width + 3u) & ~3u;
+        const size_t shared_bytes = aligned_width + width * sizeof(float);
+        plot_centroid_neighbour_range_shared_kernel<<<height, 256, shared_bytes>>>(
+            bool_data, mtd_abs_sum, width, height);
+    }
+    else
+    {
+        plot_centroid_neighbour_range_kernel <<< blocks_num1, threads_per_block>>> (bool_data, mtd_abs_sum, width , height);
+    }
     //速度维凝聚
     plot_centroid_neighbour_velocity_kernel <<< blocks_num2, threads_per_block>>> (bool_data, mtd_abs_sum, width , height);
 }
@@ -1621,6 +1730,105 @@ void SPCalculateCeilPara(float* mtd_abs_sum,float* integral_image_row, float* in
                                                                               mtd_sum, mtd_fw, mtd_fy,
                                                                               OutParaDots,
                                                                               width, height, ParaWave, ParaArray, SP_para_current, bool_data, clutter);
+}
+
+__global__ void countSignalPointsKernel(const unsigned char* bool_data,
+                                        const DianJi_para_t* dots, unsigned int count,
+                                        unsigned int* blockCounts)
+{
+    const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const bool valid = index < count && bool_data[index] == 1 &&
+                       fabsf(dots[index].aziRatio) <= 1.0f &&
+                       fabsf(dots[index].eleRatio) <= 1.0f;
+    const unsigned int mask = __ballot_sync(0xffffffff, valid);
+    __shared__ unsigned int warpCounts[8];
+    if ((threadIdx.x & 31) == 0)
+    {
+        warpCounts[threadIdx.x >> 5] = __popc(mask);
+    }
+    __syncthreads();
+    if (threadIdx.x == 0)
+    {
+        unsigned int total = 0;
+        for (int warp = 0; warp < 8; ++warp)
+        {
+            total += warpCounts[warp];
+        }
+        blockCounts[blockIdx.x] = total;
+    }
+}
+
+__global__ void prefixSignalPointCountsKernel(const unsigned int* blockCounts,
+                                              unsigned int* blockOffsets,
+                                              unsigned int blocks, CompactDotResult* result)
+{
+    unsigned int total = 0;
+    for (unsigned int block = 0; block < blocks; ++block)
+    {
+        blockOffsets[block] = total;
+        total = total + blockCounts[block] < MAX_DOTS_NUM
+                    ? total + blockCounts[block] : MAX_DOTS_NUM;
+    }
+    result->count = total;
+}
+
+__global__ void gatherSignalPointsKernel(const unsigned char* bool_data,
+                                         const DianJi_para_t* dots, unsigned int count,
+                                         const unsigned int* blockOffsets,
+                                         CompactDotResult* result)
+{
+    const unsigned int offset = blockOffsets[blockIdx.x];
+    if (offset >= MAX_DOTS_NUM)
+    {
+        return;
+    }
+
+    const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const bool valid = index < count && bool_data[index] == 1 &&
+                       fabsf(dots[index].aziRatio) <= 1.0f &&
+                       fabsf(dots[index].eleRatio) <= 1.0f;
+    const unsigned int mask = __ballot_sync(0xffffffff, valid);
+    const unsigned int lane = threadIdx.x & 31;
+    const unsigned int warp = threadIdx.x >> 5;
+    __shared__ unsigned int warpOffsets[8];
+    if (lane == 0)
+    {
+        warpOffsets[warp] = __popc(mask);
+    }
+    __syncthreads();
+    if (threadIdx.x == 0)
+    {
+        unsigned int total = 0;
+        for (int w = 0; w < 8; ++w)
+        {
+            const unsigned int current = warpOffsets[w];
+            warpOffsets[w] = total;
+            total += current;
+        }
+    }
+    __syncthreads();
+    const unsigned int rank = offset + warpOffsets[warp] +
+                              __popc(mask & ((1u << lane) - 1u));
+    if (valid && rank < MAX_DOTS_NUM)
+    {
+        result->dots[rank].index = index;
+        result->dots[rank].para = dots[index];
+    }
+}
+
+void compactSignalPoints(const unsigned char* bool_data, const DianJi_para_t* dots,
+                         unsigned int count, unsigned int* blockCounts,
+                         unsigned int* blockOffsets, CompactDotResult* result)
+{
+    if (count == 0)
+    {
+        cudaMemset(result, 0, sizeof(unsigned int));
+        return;
+    }
+    const unsigned int blocks = (count + 255) / 256;
+    countSignalPointsKernel<<<blocks, 256>>>(bool_data, dots, count, blockCounts);
+    prefixSignalPointCountsKernel<<<1, 1>>>(blockCounts, blockOffsets, blocks, result);
+    gatherSignalPointsKernel<<<blocks, 256>>>(bool_data, dots, count, blockOffsets, result);
 }
 
 //**********************************************************************************//

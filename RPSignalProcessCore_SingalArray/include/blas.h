@@ -10,6 +10,8 @@ void initCuHandle(wave_para_t* wave_para_p, int waveNum);
 void init_pulsecompress_fft_gpu(wave_para_t* wave_para_p);
 void pulsecompress_fft_gpu(cuComplex* input_data, cuComplex* output_data, const wave_para_t wave_para_p);
 void pulsecompress_ifft_gpu(cuComplex* input_data, cuComplex* output_data, const wave_para_t wave_para_p);
+void pulsecompress_fft_three_gpu(cuComplex* input_data, cuComplex* output_data, const wave_para_t wave_para_p);
+void pulsecompress_ifft_three_gpu(cuComplex* input_data, cuComplex* output_data, const wave_para_t wave_para_p);
 void init_mtd_fft_gpu(wave_para_t* wave_para_p);
 void mtd_fft_gpu(cuComplex* input_data, cuComplex* output_data, const wave_para_t wave_para_p);
 void destroyCuHandle(void);

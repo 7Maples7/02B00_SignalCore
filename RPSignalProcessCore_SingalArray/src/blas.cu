@@ -3,10 +3,15 @@
 #include <cublas_v2.h>
 #include <cufft.h>
 #include <stdio.h>
+#include "../include/common.h"
 
 //#include<archive/CDefine.h>
 
 cufftHandle* pc_fft_handle = NULL;
+#if defined (Signalprocess_Radar_Archiwave) || defined (Signalprocess_Radar_chaofeng)
+static cufftHandle* pc_fft_handle_three = NULL;
+static int pc_fft_handle_three_count = 0;
+#endif
 cufftHandle* mtd_fft_handle = NULL;
 cufftHandle mtd_fft_handle_512 = 0;
 cufftHandle pc_fft_handle_512 = 0;
@@ -14,13 +19,28 @@ cublasHandle_t blasHandle = NULL;
 
 void initCuHandle(wave_para_t* wave_para_p, int waveNum)
 {
-    pc_fft_handle = (cufftHandle*)malloc(waveNum * sizeof(cufftHandle));
     mtd_fft_handle = (cufftHandle*)malloc(waveNum * sizeof(cufftHandle));
     unsigned int i;
+#if !defined (Signalprocess_Radar_Archiwave) && !defined (Signalprocess_Radar_chaofeng)
+    pc_fft_handle = (cufftHandle*)malloc(waveNum * sizeof(cufftHandle));
     for(i = 0; i < waveNum; i++)
     {
         cufftPlan1d(&pc_fft_handle[i], wave_para_p[i].fft_length, CUFFT_C2C, wave_para_p[i].pulse_number);
     }
+#else
+    pc_fft_handle_three = (cufftHandle*)calloc(waveNum, sizeof(cufftHandle));
+    pc_fft_handle_three_count = waveNum;
+    for(i = 0; i < waveNum; i++)
+    {
+        if(wave_para_p[i].fft_length == 0 || wave_para_p[i].pulse_number == 0)
+        {
+            continue;
+        }
+        CHECK_CUFFT(cufftPlan1d(&pc_fft_handle_three[i], wave_para_p[i].fft_length,
+                                CUFFT_C2C, 3 * wave_para_p[i].pulse_number));
+        CHECK_CUFFT(cufftSetStream(pc_fft_handle_three[i], cudaStreamPerThread));
+    }
+#endif
     int pulse_length, fft_number, fft_length;
     const int rank = 1;
     int n[rank];
@@ -83,6 +103,22 @@ void pulsecompress_ifft_gpu(cuComplex* input_data, cuComplex* output_data, const
     }
     cufftExecC2C(fft_handle, input_data, output_data, CUFFT_INVERSE);
 }
+
+#if defined (Signalprocess_Radar_Archiwave) || defined (Signalprocess_Radar_chaofeng)
+void pulsecompress_fft_three_gpu(cuComplex* input_data, cuComplex* output_data, const wave_para_t wave_para_p)
+{
+    const int index = wave_para_p.waveCode < WAVENUM
+                          ? wave_para_p.waveCode : wave_para_p.waveCode - WAVENUM;
+    CHECK_CUFFT(cufftExecC2C(pc_fft_handle_three[index], input_data, output_data, CUFFT_FORWARD));
+}
+
+void pulsecompress_ifft_three_gpu(cuComplex* input_data, cuComplex* output_data, const wave_para_t wave_para_p)
+{
+    const int index = wave_para_p.waveCode < WAVENUM
+                          ? wave_para_p.waveCode : wave_para_p.waveCode - WAVENUM;
+    CHECK_CUFFT(cufftExecC2C(pc_fft_handle_three[index], input_data, output_data, CUFFT_INVERSE));
+}
+#endif
 
 void init_mtd_fft_gpu(wave_para_t* wave_para_p)
 {
@@ -151,6 +187,21 @@ void destroyCuHandle(void)
 //    printf("xxxxxxxxxxxxxxxxxxxxxxxxxxxx");
 //    unsigned int i;
 //    printf("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx%d",pc_fft_handle == NULL);
+#if defined (Signalprocess_Radar_Archiwave) || defined (Signalprocess_Radar_chaofeng)
+    if(pc_fft_handle_three != NULL)
+    {
+        for(int i = 0; i < pc_fft_handle_three_count; ++i)
+        {
+            if(pc_fft_handle_three[i] != 0)
+            {
+                CHECK_CUFFT(cufftDestroy(pc_fft_handle_three[i]));
+            }
+        }
+        free(pc_fft_handle_three);
+        pc_fft_handle_three = NULL;
+        pc_fft_handle_three_count = 0;
+    }
+#endif
     if(pc_fft_handle != NULL)
     {
         cufftDestroy(*pc_fft_handle);

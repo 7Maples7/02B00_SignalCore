@@ -37,6 +37,18 @@ typedef struct DianJi_para
     int   dopCeilIdx = 0;
 } DianJi_para_t;
 
+struct CompactDot
+{
+    unsigned int index;
+    DianJi_para_t para;
+};
+
+struct CompactDotResult
+{
+    unsigned int count;
+    CompactDot dots[MAX_DOTS_NUM];
+};
+
 void initCaponInvertVar();
 void destroyCaponInvertVar();
 
@@ -50,6 +62,8 @@ void platformSpeedCompensation(cuComplex* inData, cuComplex* outData,
 
 //脉压
 void pad_pc_data(float* src_echo_data, float* dst_data, unsigned int width, unsigned int height, unsigned int border_width);
+void pad_pc_data_three(const cuComplex* sum, const cuComplex* azi, const cuComplex* ele,
+                       cuComplex* dst, unsigned int width, unsigned int height, unsigned int border_width);
 void pulse_compress(cuComplex* src_data, cuComplex* dst_data, cuComplex* coel_data, unsigned int height, unsigned int width);
 
 //加权均值滤波
@@ -92,6 +106,10 @@ void SPCalculateCeilPara(float* mtd_abs_sum, float* integral_image_row, float* i
                          DianJi_para_t* OutParaDots,
                          unsigned int width, unsigned int height, const wave_para_t ParaWave, const sp_para_t SP_para_current,
                          const data_pack_para_t ParaArray, unsigned char* bool_data, float* clutter);
+
+void compactSignalPoints(const unsigned char* bool_data, const DianJi_para_t* dots,
+                         unsigned int count, unsigned int* blockCounts,
+                         unsigned int* blockOffsets, CompactDotResult* result);
 
 void caponInvert(cuComplex* src, cuComplex* dst, int n, int batchSize);
 void caponPowerSpectraEstimation(cuComplex* x, cuComplex* S,

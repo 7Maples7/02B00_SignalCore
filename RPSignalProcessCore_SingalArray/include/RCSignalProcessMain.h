@@ -4,7 +4,11 @@
     #include<IRadarBC.h>
 #endif
 #include<mutex>
+#include<vector>
+#include<cstdint>
+#include<unordered_map>
 #include<QDebug>
+#include<QMap>
 #include<QObject>
 /** @brief   . */
 #include "common.h"
@@ -118,6 +122,7 @@ public:
 
     struct GPUInfo
     {
+        int computeUtilization = -1;//计算利用率百分比，-1表示查询失败
         int deviceId;
         QString name;
         size_t totalMemory;
@@ -128,6 +133,18 @@ public:
         int multiProcessorCount;
         int clockRate;
         bool isAvailable;
+        QString toStr(qint32 reservedWidth = 0 )
+        {
+            QString str;
+            str += QString("[deviceId:%0]").arg(deviceId, 6 + reservedWidth, 10, QLatin1Char(' '));
+            str += str += QString("[name:%0]").arg(name);
+            str += QString("[computeCapabilityMajor:%0]").arg(computeCapabilityMajor, 6 + reservedWidth, 10, QLatin1Char(' '));
+            str += QString("[computeCapabilityMinor:%0]").arg(computeCapabilityMinor, 6 + reservedWidth, 10, QLatin1Char(' '));
+            str += QString("[multiProcessorCount:%0]").arg(multiProcessorCount, 6 + reservedWidth, 10, QLatin1Char(' '));
+            str += QString("[clockRate:%0]").arg(clockRate, 6 + reservedWidth, 10, QLatin1Char(' '));
+            str += str += QString("[isAvailable:%0]").arg(isAvailable);
+            return str;
+        }
     };
 
     /**
@@ -137,6 +154,28 @@ public:
      */
     int GetGPUResourceInfo(QList<GPUInfo>& gpuInfoList)
     {
+        QMap<QString, int> gpuUtilization;
+        QProcess query;
+        query.start(QStringLiteral("nvidia-smi"), QStringList()
+                    << "--query-gpu=pci.bus_id,utilization.gpu" << "--format=csv,noheader,nounits");
+        if(query.waitForFinished(2000) && query.exitStatus() == QProcess::NormalExit && query.exitCode() == 0)
+        {
+            for(const QString& row : QString::fromLocal8Bit(query.readAllStandardOutput()).split('\n'))
+            {
+                const auto fields = row.split(',');
+                if(fields.size() != 2) continue;
+                bool ok = false;
+                int value = fields[1].trimmed().toInt(&ok);
+                if(ok && value >= 0 && value <= 100)
+                    gpuUtilization[fields[0].trimmed().toLower().right(10)] = value;
+            }
+        }
+        else
+        {
+            query.kill();
+            query.waitForFinished(1000);
+            qWarning() << "GPU compute utilization query failed";
+        }
         int currentDevice = 0;
         cudaGetDevice(&currentDevice);
         int deviceCount = 0;
@@ -149,8 +188,11 @@ public:
         gpuInfoList.clear();
         for (int i = 0; i < deviceCount; i++)
         {
-            GPUInfo info;
+            GPUInfo info{};
             info.deviceId = i;
+            char busId[32] = {};
+            if(cudaDeviceGetPCIBusId(busId, sizeof(busId), i) == cudaSuccess)
+                info.computeUtilization = gpuUtilization.value(QString::fromLatin1(busId).toLower().right(10), -1);
             cudaDeviceProp prop;
             err = cudaGetDeviceProperties(&prop, i);
             if (err != cudaSuccess)
@@ -239,11 +281,21 @@ public:
     int SignalCoreRunCounter();
     void processAndSendMicroDoppler(shared_ptr<RawData2SP> I_dataFromDataPar, quint32& mRange, cuComplex* pcDataSum, const wave_para_t& wavePara);
 private:
+    cudaEvent_t legacyReadyEvent = nullptr;
+    cudaEvent_t pointsReadyEvent = nullptr;
+    struct HostRegistration { void* base = nullptr; bool pinned = false; };
+    std::unordered_map<const void*, HostRegistration> inputRegistrations;
+    size_t maxInputBytes = 0;
+    bool pinInput = true;
     void calculateRCS(IRadarV51::SignalProcPoint& dot_tmp);
+    float* deviceClutter(const shared_ptr<DefClutterMemory>& clutter);
+    void flushClutterCache();
     bool fillPcAndMtdExportData(IRadarV51::SignalProcPoint& dot_tmp,
                                 quint32 pointIndex,
                                 shared_ptr<RawData2SP> I_dataFromDataPar,
-                                int DotNum);
+                                int DotNum,
+                                bool savePcEcho,
+                                bool saveMtdEcho);
 
     //4. 数据成员，含静态数据成员。
 public:
@@ -322,13 +374,24 @@ private:
     float* mtd_abs_sum;
     float* mtd_abs_sum_on_cpu;
     float* mtd_abs_sum_clutter;
+    struct ClutterCacheEntry
+    {
+        shared_ptr<DefClutterMemory> clutter;
+        float* deviceData;
+        size_t bytes;
+        quint64 lastUsed;
+    };
+    std::vector<ClutterCacheEntry> clutterCache;
+    size_t clutterCacheBytes = 0;
+    quint64 clutterCacheClock = 0;
     //CFAR
     float* integral_image_row, * integral_image_col;
     unsigned char* bool_data;
     //
     DianJi_para_t* DianJi_para;
-    //fot time
-    double iStart, iElaps;
+    unsigned int* compactBlockCounts;
+    unsigned int* compactBlockOffsets;
+    CompactDotResult* compactDots;
     shared_ptr<RawData2SP> mDataFrmPar  = nullptr;//待处理的回波数据
     //micro-Doppler signature
     cuComplex* pc_data_sum_Part;

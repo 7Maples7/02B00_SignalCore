@@ -82,7 +82,6 @@ void RCSignalProcessMain::work(const SP_para I_SP,
                                shared_ptr<DefClutterMemory> clutterStatic,
                                shared_ptr<DefClutterMemory> clutterDynamic)
 {
-    iStart = cuda_seconds();
     float tmpAmplitude = 0.0;
     quint32 M_Range = 0;
     int DotNum = 0;
@@ -90,102 +89,109 @@ void RCSignalProcessMain::work(const SP_para I_SP,
                        &wave_para_current, &data_pack_para_current, &SP_para_current);
     lambda = 3e8 / data_pack_para_current.freq;
     unsigned int PulseLenMTDNum = wave_para_current.pulse_length * wave_para_current.fft_number;
-    unsigned char* bool_data_h = (unsigned char*)malloc(sizeof(unsigned char) * PulseLenMTDNum);// = (DianJi_para_t*)malloc(sizeof(DianJi_para_t) * MAX_DOTS_NUM);
-    DianJi_para_t DianJi_para_h;
+    CompactDotResult compactDotsHost;
     cudaSetDevice(targetDevice);
 //    qDebug() << I_dataFromDataPar->head->mWaveInfo.mAziStationRad;
-    QDateTime currentTime = QDateTime::currentDateTime();
     this->signalProcess(I_dataFromDataPar, clutterStatic, clutterDynamic);
-    CHECK_CUDA(cudaMemcpy(bool_data_h, bool_data, sizeof(unsigned char) * PulseLenMTDNum, cudaMemcpyDeviceToHost));
-    CHECK_CUDA(cudaMemcpy(mtd_abs_sum_on_cpu, mtd_abs_sum, sizeof(float) * PulseLenMTDNum, cudaMemcpyDeviceToHost));
-    for (quint32 i = 0; i < PulseLenMTDNum; i++)
+    compactSignalPoints(bool_data, DianJi_para, PulseLenMTDNum,
+                        compactBlockCounts, compactBlockOffsets, compactDots);
+    CHECK_CUDA(cudaEventRecord(pointsReadyEvent, cudaStreamPerThread));
+    CHECK_CUDA(cudaStreamWaitEvent(cudaStreamLegacy, pointsReadyEvent, 0));
+    CHECK_CUDA(cudaMemcpy(&compactDotsHost, compactDots, sizeof(compactDotsHost), cudaMemcpyDeviceToHost));
+    const int radarType = I_dataFromDataPar->head->radarType;
+    SAmpRatioInquire* angleInquire = nullptr;
+    if(compactDotsHost.count != 0 &&
+            (radarType == (int)Common::ParseCoreType::RadarCF ||
+             radarType == (int)Common::ParseCoreType::RadarCF_ZT))
     {
-        if (bool_data_h[i] == 1 && DotNum < 100)
-        {
-            CHECK_CUDA(cudaMemcpy(&DianJi_para_h, (DianJi_para_t*)DianJi_para + i,
-                                  sizeof(DianJi_para_t), cudaMemcpyDeviceToHost));
-            if (fabs(DianJi_para_h.aziRatio) <= 1 && fabs(DianJi_para_h.eleRatio) <= 1)
-//         if(1)
-            {
-                IRadarV51::SignalProcPoint dot_tmp;
-                dot_tmp.timeStamp        = I_dataFromDataPar->head->mWaveInfo.timeStampMs();
-                dot_tmp.frequency = I_dataFromDataPar->head->mWaveInfo.mRadarFreq;
-                dot_tmp.amplitude        = DianJi_para_h.amplitude;
-                dot_tmp.ampStaticClutter = DianJi_para_h.ampStatic_Clutter;
-                dot_tmp.aziRatio         = DianJi_para_h.aziRatio;
-                dot_tmp.eleRatio         = DianJi_para_h.eleRatio;
-                dot_tmp.I_azi            = DianJi_para_h.I_azi;
-                dot_tmp.I_ele            = DianJi_para_h.I_ele;
-                dot_tmp.Q_azi            = DianJi_para_h.Q_azi;
-                dot_tmp.Q_ele            = DianJi_para_h.Q_ele;
-                dot_tmp.beamAzimuth      =  data_pack_para_current.bc_azi;//deg
-                dot_tmp.beamElevation    = data_pack_para_current.bc_ele;//deg
-                dot_tmp.waveCode         = wave_para_current.waveCode;
-                dot_tmp.pw               = wave_para_current.pw_us;
-                dot_tmp.prt              = wave_para_current.prt_us;
-                dot_tmp.prtNum           = wave_para_current.pulse_number;
+        angleInquire = SAmpRatioInquire::GetInstance(I_dataFromDataPar->head->radarIndex);
+    }
+    if(compactDotsHost.count != 0)
+    {
+        alpha_azi = 1.15;
+        alpha_ele = 1.15;
+        seitaHalfAzi = 0.88 * lambda / (32 * 17.2e-3 * cos(deg2rad(data_pack_para_current.bc_azi))) * 180 / M_PI;
+        seitaHalfEle = 0.88 * lambda / (24 * 17.2e-3 * cos(deg2rad(data_pack_para_current.bc_ele))) * 180 / M_PI;
+    }
+    const bool savePcEcho = SignalCore::GlobalVal::GetInstance()->getSavePcEcho();
+    const bool saveMtdEcho = SignalCore::GlobalVal::GetInstance()->getSaveMtdEcho();
+    for (quint32 dotIndex = 0; dotIndex < compactDotsHost.count; ++dotIndex)
+    {
+        const quint32 i = compactDotsHost.dots[dotIndex].index;
+        const DianJi_para_t& DianJi_para_h = compactDotsHost.dots[dotIndex].para;
+        IRadarV51::SignalProcPoint dot_tmp;
+        dot_tmp.timeStamp        = I_dataFromDataPar->head->mWaveInfo.timeStampMs();
+        dot_tmp.frequency = I_dataFromDataPar->head->mWaveInfo.mRadarFreq;
+        dot_tmp.amplitude        = DianJi_para_h.amplitude;
+        dot_tmp.ampStaticClutter = DianJi_para_h.ampStatic_Clutter;
+        dot_tmp.aziRatio         = DianJi_para_h.aziRatio;
+        dot_tmp.eleRatio         = DianJi_para_h.eleRatio;
+        dot_tmp.I_azi            = DianJi_para_h.I_azi;
+        dot_tmp.I_ele            = DianJi_para_h.I_ele;
+        dot_tmp.Q_azi            = DianJi_para_h.Q_azi;
+        dot_tmp.Q_ele            = DianJi_para_h.Q_ele;
+        dot_tmp.beamAzimuth      =  data_pack_para_current.bc_azi;//deg
+        dot_tmp.beamElevation    = data_pack_para_current.bc_ele;//deg
+        dot_tmp.waveCode         = wave_para_current.waveCode;
+        dot_tmp.pw               = wave_para_current.pw_us;
+        dot_tmp.prt              = wave_para_current.prt_us;
+        dot_tmp.prtNum           = wave_para_current.pulse_number;
 //                dot_tmp.RCS              = DianJi_para_h.RCS;
-                dot_tmp.mean_col         = DianJi_para_h.mean_col;
-                dot_tmp.mean_row         = DianJi_para_h.mean_row;
-                dot_tmp.pointType   = I_dataFromDataPar->head->mTrkingInfo.Purpose;
-                switch (I_dataFromDataPar->head->radarType)
-                {
-                    case (int)Common::ParseCoreType::RadarXP:
-                        dot_tmp.velocity     = DianJi_para_h.velocity;
-                        dot_tmp.range_array        = DianJi_para_h.range ;
-                        dot_tmp.azimuth_array      = data_pack_para_current.bc_azi + dot_tmp.aziRatio * 3.61;
-                        dot_tmp.elevation_array    = data_pack_para_current.bc_ele - dot_tmp.eleRatio * 2.68;
-                        break;
-                    case (int)Common::ParseCoreType::RadarCF:
-                        dot_tmp.velocity     = -DianJi_para_h.velocity;
-                        dot_tmp.range_array        = DianJi_para_h.range - 27.0;
-                        dot_tmp.azimuth_array      = data_pack_para_current.bc_azi +
-                                                     SAmpRatioInquire::GetInstance(I_dataFromDataPar->head->radarIndex)
-                                                     ->inquireAziDeg(I_dataFromDataPar->head->mWaveInfo.mRadarFreq,
-                                                             data_pack_para_current.bc_azi,
-                                                             dot_tmp.aziRatio);
-                        dot_tmp.elevation_array    = data_pack_para_current.bc_ele +
-                                                     SAmpRatioInquire::GetInstance(I_dataFromDataPar->head->radarIndex)
-                                                     ->inquireEleDeg(I_dataFromDataPar->head->mWaveInfo.mRadarFreq,
-                                                             data_pack_para_current.bc_ele,
-                                                             dot_tmp.eleRatio);
-                        break;
-                    case (int)Common::ParseCoreType::RadarSG:
-                        qDebug() << "ku四面阵雷达测角函数";
-                        break;
-                    case (int)Common::ParseCoreType::RadarCF_ZT:
-                        dot_tmp.velocity     = -DianJi_para_h.velocity;
-                        dot_tmp.range_array        = DianJi_para_h.range - 30.0;
-                        dot_tmp.azimuth_array      = data_pack_para_current.bc_azi +
-                                                     SAmpRatioInquire::GetInstance(I_dataFromDataPar->head->radarIndex)
-                                                     ->inquireAziDeg(I_dataFromDataPar->head->mWaveInfo.mRadarFreq,
-                                                             data_pack_para_current.bc_azi,
-                                                             dot_tmp.aziRatio);
-                        dot_tmp.elevation_array    = data_pack_para_current.bc_ele +
-                                                     SAmpRatioInquire::GetInstance(I_dataFromDataPar->head->radarIndex)
-                                                     ->inquireEleDeg(I_dataFromDataPar->head->mWaveInfo.mRadarFreq,
-                                                             data_pack_para_current.bc_ele,
-                                                             dot_tmp.eleRatio);
-                        break;
-                }
-                calculateRCS(dot_tmp);
-                if (fillPcAndMtdExportData(dot_tmp, i, I_dataFromDataPar, DotNum))
-                {
-                    M_Range = i;
-                }
-                // 将原始点迹添加到列表
-                dot_tmp.MtdClsResult = IRadarV51::TargetSubTypeV5::MultiRotorUav;//TODO:后期修改为真实的识别结果
-                pointLst.push_back(dot_tmp);
-//                debug_dotpara(dot_tmp);
-                // 将包含MTD数据的点迹添加到MTD点迹列表
-                if (DianJi_para_h.amplitude > tmpAmplitude)
-                {
-                    tmpAmplitude = DianJi_para_h.amplitude;
-                    M_Range = i;
-                }
-                DotNum++;
-            }
+        dot_tmp.mean_col         = DianJi_para_h.mean_col;
+        dot_tmp.mean_row         = DianJi_para_h.mean_row;
+        dot_tmp.pointType   = I_dataFromDataPar->head->mTrkingInfo.Purpose;
+        switch (I_dataFromDataPar->head->radarType)
+        {
+            case (int)Common::ParseCoreType::RadarXP:
+                dot_tmp.velocity     = DianJi_para_h.velocity;
+                dot_tmp.range_array        = DianJi_para_h.range ;
+                dot_tmp.azimuth_array      = data_pack_para_current.bc_azi + dot_tmp.aziRatio * 3.61;
+                dot_tmp.elevation_array    = data_pack_para_current.bc_ele - dot_tmp.eleRatio * 2.68;
+                break;
+            case (int)Common::ParseCoreType::RadarCF:
+                dot_tmp.velocity     = -DianJi_para_h.velocity;
+                dot_tmp.range_array        = DianJi_para_h.range - 27.0;
+                dot_tmp.azimuth_array      = data_pack_para_current.bc_azi +
+                                             angleInquire->inquireAziDeg(I_dataFromDataPar->head->mWaveInfo.mRadarFreq,
+                                                     data_pack_para_current.bc_azi,
+                                                     dot_tmp.aziRatio);
+                dot_tmp.elevation_array    = data_pack_para_current.bc_ele +
+                                             angleInquire->inquireEleDeg(I_dataFromDataPar->head->mWaveInfo.mRadarFreq,
+                                                     data_pack_para_current.bc_ele,
+                                                     dot_tmp.eleRatio);
+                break;
+            case (int)Common::ParseCoreType::RadarSG:
+                qDebug() << "ku四面阵雷达测角函数";
+                break;
+            case (int)Common::ParseCoreType::RadarCF_ZT:
+                dot_tmp.velocity     = -DianJi_para_h.velocity;
+                dot_tmp.range_array        = DianJi_para_h.range - 30.0;
+                dot_tmp.azimuth_array      = data_pack_para_current.bc_azi +
+                                             angleInquire->inquireAziDeg(I_dataFromDataPar->head->mWaveInfo.mRadarFreq,
+                                                     data_pack_para_current.bc_azi,
+                                                     dot_tmp.aziRatio);
+                dot_tmp.elevation_array    = data_pack_para_current.bc_ele +
+                                             angleInquire->inquireEleDeg(I_dataFromDataPar->head->mWaveInfo.mRadarFreq,
+                                                     data_pack_para_current.bc_ele,
+                                                     dot_tmp.eleRatio);
+                break;
         }
+        calculateRCS(dot_tmp);
+//                if (fillPcAndMtdExportData(dot_tmp, i, I_dataFromDataPar, DotNum))
+//                {
+//                    M_Range = i;
+//                }
+        // 将原始点迹添加到列表
+        dot_tmp.MtdClsResult = IRadarV51::TargetSubTypeV5::MultiRotorUav;//TODO:后期修改为真实的识别结果
+        pointLst.push_back(dot_tmp);
+//                debug_dotpara(dot_tmp);
+        // 将包含MTD数据的点迹添加到MTD点迹列表
+        if (DianJi_para_h.amplitude > tmpAmplitude)
+        {
+            tmpAmplitude = DianJi_para_h.amplitude;
+            M_Range = i;
+        }
+        DotNum++;
     }
     //目标识别处理
     if (I_dataFromDataPar->head->mTrkingInfo.Purpose == 0x42 )
@@ -203,25 +209,14 @@ void RCSignalProcessMain::work(const SP_para I_SP,
             I_dataFromDataPar->head->mTrkingInfo.bak.ClsInfo.typeMicroCls = 0x00;
         }
     }
-    free(bool_data_h);
-    iElaps = cuda_seconds() - iStart;
-//    qDebug() << iElaps * 1000;
 }
 
 void RCSignalProcessMain::calculateRCS(IRadarV51::SignalProcPoint& dot_tmp)
 {
-    alpha_azi = 1.15;
-    alpha_ele = 1.15;
-    seitaHalfAzi = 0.88 * lambda / (32 * 17.2e-3 * cos(deg2rad(data_pack_para_current.bc_azi) )) * 180 / M_PI;
-    seitaHalfEle = 0.88 * lambda / (24 * 17.2e-3 * cos(deg2rad(data_pack_para_current.bc_ele))) * 180 / M_PI;
     Fazi_t = exp(-2.7726 * pow((dot_tmp.azimuth_array - data_pack_para_current.bc_azi) / seitaHalfAzi, 2));
     Fele_t = exp(-2.7726 * pow((dot_tmp.elevation_array - data_pack_para_current.bc_ele) / seitaHalfEle, 2));
     Fazi_r = exp(-2.7726 * pow((dot_tmp.azimuth_array - data_pack_para_current.bc_azi) / (alpha_azi * seitaHalfAzi), 2));
     Fele_r = exp(-2.7726 * pow((dot_tmp.elevation_array - data_pack_para_current.bc_ele) / (alpha_ele * seitaHalfEle), 2));
-    sig_Pr = dot_tmp.amplitude / (50 * wave_para_current.pw_us / 2) / wave_para_current.pulse_number;
-    V_AD = sig_Pr / (32768 - 1) * 1;
-    AD_Pr = 10 * log(V_AD * V_AD / 50 * 1000);
-    Pr_0 = AD_Pr - L_pz - L_dzf;
     dot_tmp.RCS = pow(dot_tmp.range_array, 4) * pow(4 * M_PI, 3) * pow(dot_tmp.amplitude / (50 * wave_para_current.pw_us) / wave_para_current.pulse_number / pow(10, 74.0 / 10.0 / 2.0) / pow(2, 15) * 1.3 * 1.4, 2) * 0.01 * 6.310 /
                   (484.57 * pow(10, (32.7221 / 10.0)) * pow(10, (31.9221 / 10.0)) * Fazi_t* Fele_t* Fazi_r * Fele_r * pow(cos(dot_tmp.azimuth_array * M_PI / 180) * cos(dot_tmp.elevation_array * M_PI / 180), 2) * lambda * lambda) * 4;
 }
@@ -229,10 +224,10 @@ void RCSignalProcessMain::calculateRCS(IRadarV51::SignalProcPoint& dot_tmp)
 bool RCSignalProcessMain::fillPcAndMtdExportData(IRadarV51::SignalProcPoint& dot_tmp,
         quint32 pointIndex,
         shared_ptr<RawData2SP> I_dataFromDataPar,
-        int DotNum)
+        int DotNum,
+        bool savePcEcho,
+        bool saveMtdEcho)
 {
-    const bool savePcEcho = SignalCore::GlobalVal::GetInstance()->getSavePcEcho();
-    const bool saveMtdEcho = SignalCore::GlobalVal::GetInstance()->getSaveMtdEcho();
     const quint32 M_Range = pointIndex;
     if(savePcEcho)
     {
@@ -390,6 +385,74 @@ void RCSignalProcessMain::fr_para_init(const SP_para I_SP,
     //qDebug() << sp_para_cur->v_th_No_min << sp_para_cur->v_th_No_max<<sp_para_cur->r_th_No_min<<sp_para_cur->r_th_No_max << I_SP.v_min << I_SP.v_max << I_SP.r_min << I_SP.r_max;
 }
 
+float* RCSignalProcessMain::deviceClutter(const shared_ptr<DefClutterMemory>& clutter)
+{
+    constexpr size_t cacheLimit = 128u * 1024u * 1024u;
+    const size_t bytes = static_cast<size_t>(clutter->size()) * sizeof(float);
+    for(auto& entry : clutterCache)
+    {
+        if(entry.clutter == clutter)
+        {
+            entry.lastUsed = ++clutterCacheClock;
+            return entry.deviceData;
+        }
+    }
+    auto evictOldest = [this]()
+    {
+        auto oldest = std::min_element(clutterCache.begin(), clutterCache.end(),
+                                       [](const ClutterCacheEntry & left, const ClutterCacheEntry & right)
+        {
+            return left.lastUsed < right.lastUsed;
+        });
+        CHECK_CUDA(cudaMemcpy(oldest->clutter->getArray(), oldest->deviceData,
+                              oldest->bytes, cudaMemcpyDeviceToHost));
+        CHECK_CUDA(cudaFree(oldest->deviceData));
+        clutterCacheBytes -= oldest->bytes;
+        clutterCache.erase(oldest);
+    };
+    if(bytes <= cacheLimit)
+    {
+        while(!clutterCache.empty() && clutterCacheBytes > cacheLimit - bytes)
+        {
+            evictOldest();
+        }
+        float* deviceData = nullptr;
+        cudaError_t status = cudaMalloc(&deviceData, bytes);
+        while(status == cudaErrorMemoryAllocation && !clutterCache.empty())
+        {
+            cudaGetLastError();
+            evictOldest();
+            status = cudaMalloc(&deviceData, bytes);
+        }
+        if(status == cudaSuccess)
+        {
+            CHECK_CUDA(cudaMemcpy(deviceData, clutter->getArray(), bytes, cudaMemcpyHostToDevice));
+            clutterCache.push_back({clutter, deviceData, bytes, ++clutterCacheClock});
+            clutterCacheBytes += bytes;
+            return deviceData;
+        }
+        if(status != cudaErrorMemoryAllocation)
+        {
+            CHECK_CUDA(status);
+        }
+        cudaGetLastError();
+    }
+    CHECK_CUDA(cudaMemcpy(mtd_abs_sum_clutter, clutter->getArray(), bytes, cudaMemcpyHostToDevice));
+    return mtd_abs_sum_clutter;
+}
+
+void RCSignalProcessMain::flushClutterCache()
+{
+    for(const auto& entry : clutterCache)
+    {
+        CHECK_CUDA(cudaMemcpy(entry.clutter->getArray(), entry.deviceData,
+                              entry.bytes, cudaMemcpyDeviceToHost));
+        CHECK_CUDA(cudaFree(entry.deviceData));
+    }
+    clutterCache.clear();
+    clutterCacheBytes = 0;
+}
+
 void RCSignalProcessMain::signalProcess(shared_ptr<RawData2SP> I_dataFromDataPar,
                                         shared_ptr<DefClutterMemory> clutterStatic,
                                         shared_ptr<DefClutterMemory> clutterDynamic)
@@ -410,44 +473,99 @@ void RCSignalProcessMain::signalProcess(shared_ptr<RawData2SP> I_dataFromDataPar
         qDebug() << "sample number error;" << I_dataFromDataPar->head->mWaveInfo.sampleNbr()  << (int)pulse_length ;
         return;
     }
-    iStart = cuda_seconds();
-    //qDebug() << "pwlength:" << wave_para_current.pw_leng:th << "prt:" << wave_para_current.prt << "pulse_length:" << pulse_length << "pulse_number:" << pulse_number << "fft_length:" << fft_length;
     //**********************************************************************************//
     //                                      读取回波数据                                  //
     //**********************************************************************************//
-//return;
-    CHECK_CUDA(cudaMemcpy(echo_data_sum_int, (short*)I_dataFromDataPar->echoDataMix, sizeof(SampleComplexInt16)*pulse_length * pulse_number, cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(echo_data_azi_int, (short*)I_dataFromDataPar->echoDataAzi, sizeof(SampleComplexInt16)*pulse_length * pulse_number, cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(echo_data_ele_int, (short*)I_dataFromDataPar->echoDataEle, sizeof(SampleComplexInt16)*pulse_length * pulse_number, cudaMemcpyHostToDevice));
-    //CHECK_CUDA(cudaDeviceSynchronize());
-//return;
+    const size_t uploadBytes = sizeof(SampleComplexInt16) * static_cast<size_t>(pulse_length) * pulse_number;
+#if defined (Signalprocess_Radar_Archiwave) || defined (Signalprocess_Radar_chaofeng)
+    echo_data_azi_int = reinterpret_cast<short*>(reinterpret_cast<char*>(echo_data_sum_int) + uploadBytes);
+    echo_data_ele_int = reinterpret_cast<short*>(reinterpret_cast<char*>(echo_data_azi_int) + uploadBytes);
+    const char* hostMix = reinterpret_cast<const char*>(I_dataFromDataPar->echoDataMix);
+    const char* hostAzi = reinterpret_cast<const char*>(I_dataFromDataPar->echoDataAzi);
+    const bool contiguousHost = hostAzi == hostMix + uploadBytes &&
+                                reinterpret_cast<const char*>(I_dataFromDataPar->echoDataEle) == hostAzi + uploadBytes;
+    if(contiguousHost)
+    {
+        // Shared-memory slots are reused, so register each source region only once.
+        auto registration = inputRegistrations.find(hostMix);
+        if(pinInput && registration == inputRegistrations.end())
+        {
+            const long systemPageSize = sysconf(_SC_PAGESIZE);
+            if(systemPageSize > 0 && maxInputBytes >= 3 * uploadBytes)
+            {
+                const size_t pageSize = static_cast<size_t>(systemPageSize);
+                const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(hostMix);
+                const std::uintptr_t aligned = address - address % pageSize;
+                const size_t span = address - aligned + maxInputBytes;
+                const size_t registeredBytes = (span + pageSize - 1) / pageSize * pageSize;
+                void* base = reinterpret_cast<void*>(aligned);
+                const cudaError_t status = cudaHostRegister(base, registeredBytes, cudaHostRegisterDefault);
+                registration = inputRegistrations.emplace(hostMix,
+                               HostRegistration{status == cudaSuccess ? base : nullptr,
+                                                status == cudaSuccess}).first;
+                if(status != cudaSuccess)
+                {
+                    qWarning() << "CUDA input pin failed:" << cudaGetErrorString(status);
+                }
+            }
+        }
+        CHECK_CUDA(cudaMemcpy(echo_data_sum_int, hostMix, 3 * uploadBytes, cudaMemcpyHostToDevice));
+    }
+    else
+#endif
+    {
+        CHECK_CUDA(cudaMemcpy(echo_data_sum_int, I_dataFromDataPar->echoDataMix, uploadBytes, cudaMemcpyHostToDevice));
+        CHECK_CUDA(cudaMemcpy(echo_data_azi_int, I_dataFromDataPar->echoDataAzi, uploadBytes, cudaMemcpyHostToDevice));
+        CHECK_CUDA(cudaMemcpy(echo_data_ele_int, I_dataFromDataPar->echoDataEle, uploadBytes, cudaMemcpyHostToDevice));
+    }
+    CHECK_CUDA(cudaEventRecord(legacyReadyEvent, cudaStreamLegacy));
+    CHECK_CUDA(cudaStreamWaitEvent(cudaStreamPerThread, legacyReadyEvent, 0));
     convertIntToCuComplex(echo_data_sum_int, echo_data_sum, wave_para_current);
     convertIntToCuComplex(echo_data_azi_int, echo_data_azi, wave_para_current);
     convertIntToCuComplex(echo_data_ele_int, echo_data_ele, wave_para_current);
     //**********************************************************************************/ /
     //                                    平台速度补偿                                     //
     //**********************************************************************************//
-    platformSpeedCompensation(echo_data_sum, echoCompensationSum, mDopcompensation, data_pack_para_current.freq, wave_para_current);
-    platformSpeedCompensation(echo_data_azi, echoCompensationAzi, mDopcompensation, data_pack_para_current.freq, wave_para_current);
-    platformSpeedCompensation(echo_data_ele, echoCompensationEle, mDopcompensation, data_pack_para_current.freq, wave_para_current);
+//    platformSpeedCompensation(echo_data_sum, echoCompensationSum, mDopcompensation, data_pack_para_current.freq, wave_para_current);
+//    platformSpeedCompensation(echo_data_azi, echoCompensationAzi, mDopcompensation, data_pack_para_current.freq, wave_para_current);
+//    platformSpeedCompensation(echo_data_ele, echoCompensationEle, mDopcompensation, data_pack_para_current.freq, wave_para_current);
     //**********************************************************************************/ /
     //                                       脉压                                        //
     //**********************************************************************************//
     //
-    pad_pc_data((float*)echoCompensationSum, (float*)padded_echo_data_sum, pulse_length, pulse_number, fft_length);
+#if defined (Signalprocess_Radar_Archiwave) || defined (Signalprocess_Radar_chaofeng)
+    const size_t channelLength = static_cast<size_t>(fft_length) * pulse_number;
+    // Each sum pointer owns a three-channel allocation; the other two are views for this wave.
+    padded_echo_data_azi = padded_echo_data_sum + channelLength;
+    padded_echo_data_ele = padded_echo_data_azi + channelLength;
+    echo_fft_data_azi = echo_fft_data_sum + channelLength;
+    echo_fft_data_ele = echo_fft_data_azi + channelLength;
+    pc_fft_data_azi = pc_fft_data_sum + channelLength;
+    pc_fft_data_ele = pc_fft_data_azi + channelLength;
+    pc_data_azi = pc_data_sum + channelLength;
+    pc_data_ele = pc_data_azi + channelLength;
+    pad_pc_data_three(echo_data_sum, echo_data_azi, echo_data_ele,
+                      padded_echo_data_sum, pulse_length, pulse_number, fft_length);
+    pulsecompress_fft_three_gpu(padded_echo_data_sum, echo_fft_data_sum, wave_para_current);
+    pulse_compress(echo_fft_data_sum, pc_fft_data_sum,
+                   pc_coel_wave[wave_para_current.waveCode], 3 * pulse_number, fft_length);
+    pulsecompress_ifft_three_gpu(pc_fft_data_sum, pc_data_sum, wave_para_current);
+#else
+    pad_pc_data((float*)echo_data_sum, (float*)padded_echo_data_sum, pulse_length, pulse_number, fft_length);
     pulsecompress_fft_gpu(padded_echo_data_sum, echo_fft_data_sum, wave_para_current);
     pulse_compress(echo_fft_data_sum, pc_fft_data_sum, pc_coel_wave[wave_para_current.waveCode], pulse_number, fft_length);
     pulsecompress_ifft_gpu(pc_fft_data_sum, pc_data_sum, wave_para_current);
     //方位差 ----------------------------------------------------------------------------------------
-    pad_pc_data((float*)echoCompensationAzi, (float*)padded_echo_data_azi, pulse_length, pulse_number, fft_length);
+    pad_pc_data((float*)echo_data_azi, (float*)padded_echo_data_azi, pulse_length, pulse_number, fft_length);
     pulsecompress_fft_gpu(padded_echo_data_azi, echo_fft_data_azi, wave_para_current);
     pulse_compress(echo_fft_data_azi, pc_fft_data_azi, pc_coel_wave[wave_para_current.waveCode], pulse_number, fft_length);
     pulsecompress_ifft_gpu(pc_fft_data_azi, pc_data_azi, wave_para_current);
     //俯仰差 ----------------------------------------------------------------------------------------
-    pad_pc_data((float*)echoCompensationEle, (float*)padded_echo_data_ele, pulse_length, pulse_number, fft_length);
+    pad_pc_data((float*)echo_data_ele, (float*)padded_echo_data_ele, pulse_length, pulse_number, fft_length);
     pulsecompress_fft_gpu(padded_echo_data_ele, echo_fft_data_ele, wave_para_current);
     pulse_compress(echo_fft_data_ele, pc_fft_data_ele, pc_coel_wave[wave_para_current.waveCode], pulse_number, fft_length);
     pulsecompress_ifft_gpu(pc_fft_data_ele, pc_data_ele, wave_para_current);
+#endif
     //抠除零通道的情况
     float dv = 3e8 / I_dataFromDataPar->head->mWaveInfo.mRadarFreq / (I_dataFromDataPar->head->mWaveInfo.mPRTUs * 1e-6)
                / I_dataFromDataPar->head->mWaveInfo.mPulseAmount / 2;
@@ -512,14 +630,17 @@ void RCSignalProcessMain::signalProcess(shared_ptr<RawData2SP> I_dataFromDataPar
     if(I_dataFromDataPar->head->mTrkingInfo.Purpose == 0x00)
     {
 //        qDebug() << I_dataFromDataPar->head->mTrkingInfo.Purpose;
-        DefClutterMemory(pulse_number, pulse_length);
-        CHECK_CUDA(cudaMemcpy(mtd_abs_sum_clutter, clutterStatic->getArray(), clutterStatic->size() * sizeof(float), cudaMemcpyHostToDevice))
+        float* clutterDeviceData = deviceClutter(clutterStatic);
         SPCalculateCeilPara(mtd_abs_sum, integral_image_row, integral_image_col,
                             mtd_sum_fftshift, mtd_azi_fftshift, mtd_ele_fftshift,
                             DianJi_para, pulse_length, mtd_number, wave_para_current, SP_para_current,
-                            data_pack_para_current, bool_data, mtd_abs_sum_clutter);
-        DefClutterMemoryUpdate_cpu(mtd_abs_sum, mtd_abs_sum_clutter, pulse_number, pulse_length, clutterStatic->rateWeight);
-        CHECK_CUDA(cudaMemcpy(clutterStatic->getArray(), mtd_abs_sum_clutter, clutterStatic->size() * sizeof(float), cudaMemcpyDeviceToHost));
+                            data_pack_para_current, bool_data, clutterDeviceData);
+        DefClutterMemoryUpdate_cpu(mtd_abs_sum, clutterDeviceData, pulse_number, pulse_length, clutterStatic->rateWeight);
+        if(clutterDeviceData == mtd_abs_sum_clutter)
+        {
+            CHECK_CUDA(cudaMemcpy(clutterStatic->getArray(), clutterDeviceData,
+                                  clutterStatic->size() * sizeof(float), cudaMemcpyDeviceToHost));
+        }
     }
     else
     {
@@ -529,8 +650,8 @@ void RCSignalProcessMain::signalProcess(shared_ptr<RawData2SP> I_dataFromDataPar
                             DianJi_para, pulse_length, mtd_number, wave_para_current, SP_para_current,
                             data_pack_para_current, bool_data, mtd_abs_sum_clutter);
     }
-    CHECK_CUDA(cudaDeviceSynchronize());
-    iElaps = cuda_seconds() - iStart;
+    CHECK_CUDA(cudaEventRecord(legacyReadyEvent, cudaStreamLegacy));
+    CHECK_CUDA(cudaStreamWaitEvent(cudaStreamPerThread, legacyReadyEvent, 0));
 }
 
 void RCSignalProcessMain::wave_para_init_archiwave(wave_para_t* wave_para_p, const QMap<WaveBaseInfo, int>& wave_map)
@@ -558,6 +679,8 @@ int RCSignalProcessMain::RFSignalProcess(
     {
         return 0x01;
     }
+//    SignalCore::RGCommunicateCore::GetInstance()->RFSendPoints( this->mDataFrmPar, points, true );
+//    return 0x00;
     cudaSetDevice(targetDevice);
     WaveBaseInfo info(this->mDataFrmPar->head->mWaveInfo.pulseWidthUs(),
                       this->mDataFrmPar->head->mWaveInfo.pRTUs(),
@@ -651,6 +774,18 @@ void RCSignalProcessMain::destroy()
         qDebug() << "is running ...";
         RGTimeSystem::GetInstance()->RFDelayMs(10);
     }
+    CHECK_CUDA(cudaSetDevice(targetDevice));
+    flushClutterCache();
+    for(const auto& entry : inputRegistrations)
+    {
+        if(entry.second.pinned)
+        {
+            CHECK_CUDA(cudaHostUnregister(entry.second.base));
+        }
+    }
+    inputRegistrations.clear();
+    CHECK_CUDA(cudaEventDestroy(pointsReadyEvent));
+    CHECK_CUDA(cudaEventDestroy(legacyReadyEvent));
     //清除handle缓存
     destroyCuHandle();
     //清除capon invert var
@@ -685,25 +820,35 @@ void RCSignalProcessMain::destroy()
     CHECK_CUDA(cudaFree(echo_data_azi));
     CHECK_CUDA(cudaFree(echo_data_ele));
     CHECK_CUDA(cudaFree(echo_data_sum_int));
+#if !defined (Signalprocess_Radar_Archiwave) && !defined (Signalprocess_Radar_chaofeng)
     CHECK_CUDA(cudaFree(echo_data_azi_int));
     CHECK_CUDA(cudaFree(echo_data_ele_int));
+#endif
     //平台速度补偿后回波
     CHECK_CUDA(cudaFree(echoCompensationSum));
     CHECK_CUDA(cudaFree(echoCompensationAzi));
     CHECK_CUDA(cudaFree(echoCompensationEle));
     //脉压
     CHECK_CUDA(cudaFree(padded_echo_data_sum));
+#if !defined (Signalprocess_Radar_Archiwave) && !defined (Signalprocess_Radar_chaofeng)
     CHECK_CUDA(cudaFree(padded_echo_data_azi));
     CHECK_CUDA(cudaFree(padded_echo_data_ele));
+#endif
     CHECK_CUDA(cudaFree(echo_fft_data_sum));
+#if !defined (Signalprocess_Radar_Archiwave) && !defined (Signalprocess_Radar_chaofeng)
     CHECK_CUDA(cudaFree(echo_fft_data_azi));
     CHECK_CUDA(cudaFree(echo_fft_data_ele));
+#endif
     CHECK_CUDA(cudaFree(pc_fft_data_sum));
+#if !defined (Signalprocess_Radar_Archiwave) && !defined (Signalprocess_Radar_chaofeng)
     CHECK_CUDA(cudaFree(pc_fft_data_azi));
     CHECK_CUDA(cudaFree(pc_fft_data_ele));
+#endif
     CHECK_CUDA(cudaFree(pc_data_sum));
+#if !defined (Signalprocess_Radar_Archiwave) && !defined (Signalprocess_Radar_chaofeng)
     CHECK_CUDA(cudaFree(pc_data_azi));
     CHECK_CUDA(cudaFree(pc_data_ele));
+#endif
     //
     CHECK_CUDA(cudaFree(DataWeighedMeanFilSum));
     CHECK_CUDA(cudaFree(DataWeighedMeanFilAzi));
@@ -717,12 +862,14 @@ void RCSignalProcessMain::destroy()
     CHECK_CUDA(cudaFree(mtd_ele_fftshift));
     CHECK_CUDA(cudaFree(mtd_abs_sum));
     CHECK_CUDA(cudaFree(mtd_abs_sum_clutter));
-    free(mtd_abs_sum_on_cpu);
     //CFAR
     CHECK_CUDA(cudaFree(integral_image_row));
     CHECK_CUDA(cudaFree(integral_image_col));
     CHECK_CUDA(cudaFree(bool_data));
     CHECK_CUDA(cudaFree(DianJi_para));
+    CHECK_CUDA(cudaFree(compactBlockCounts));
+    CHECK_CUDA(cudaFree(compactBlockOffsets));
+    CHECK_CUDA(cudaFree(compactDots));
     //CHECK_CUDA(cudaFree(kaiserCoel_512));
     //CHECK_CUDA(cudaFree(hammingCoel_512));
     CHECK_CUDA(cudaFree(pc_data_sum_Part));
@@ -738,15 +885,24 @@ void RCSignalProcessMain::active()
     signalcore = SignalCoreRunCounter();
     QList<GPUInfo>gpuInfoList;
     int flg =  GetGPUResourceInfo(gpuInfoList);
-    std::sort( gpuInfoList.begin(), gpuInfoList.end(), [ = ](GPUInfo v1, GPUInfo v2)
+    for( auto& gpu : gpuInfoList)
     {
-        return v1.freeMemory > v2.freeMemory;
+        qDebug() << gpu.toStr() << "compute utilization:" << gpu.computeUtilization;
+    }
+    std::sort(gpuInfoList.begin(), gpuInfoList.end(), [](const GPUInfo & v1, const GPUInfo & v2)
+    {
+        return v1.deviceId < v2.deviceId;
     });
     if(gpuInfoList.size())
     {
+        // 按实例创建顺序轮询：0,1,0,1,...
+        int idx = ((signalcore % gpuInfoList.size()) + gpuInfoList.size()) % gpuInfoList.size();
         targetDevice = gpuInfoList.first().deviceId;
-        qDebug() << "use gpu:" << targetDevice ;
+        idx = RGTimeSystem::GetInstance()->RFElapsedNanoNow_ns() % gpuInfoList.size();
+        targetDevice = gpuInfoList.at(idx).deviceId;
+        qDebug() << "use gpu:" << targetDevice << "/" << gpuInfoList.size();
     }
+//    targetDevice = 0;
     cudaGetDeviceCount(&deviceCount);
     this->variableApplication();
     qDebug() << "RCSignalProcessMain::active - connect";
@@ -791,14 +947,17 @@ bool RCSignalProcessMain::variableApplication()
     {
         size = 1;
     }
-    wave_para_all = (wave_para_t*)malloc(size * sizeof(wave_para_t));
+    wave_para_all = (wave_para_t*)calloc(size, sizeof(wave_para_t));
 //    bool openCoelSuccess;
     this->DataFolder = QDateTime::currentDateTime().toString("yy_MM_dd_HH_mm_ss");
     /** @brief   variable initial. */
+    CHECK_CUDA(cudaSetDevice(targetDevice));
+    pinInput = qgetenv("SP_PIN_INPUT") != "0";
+    CHECK_CUDA(cudaEventCreateWithFlags(&legacyReadyEvent, cudaEventDisableTiming));
+    CHECK_CUDA(cudaEventCreateWithFlags(&pointsReadyEvent, cudaEventDisableTiming));
 #if defined (Signalprocess_Radar_Archiwave) || defined (Signalprocess_Radar_chaofeng)
     wave_para_init_archiwave(wave_para_all, this->mWaveInfoLst); //initialization waveform
     //脉压系数
-    CHECK_CUDA(cudaSetDevice(targetDevice));
     pc_coel_wave = (cuComplex**)malloc(size * sizeof(cuComplex*));
     for(auto  info : this->mWaveInfoLst.keys())
     {
@@ -823,7 +982,9 @@ bool RCSignalProcessMain::variableApplication()
     {
         int sample_nbr = info.sampleNbr;
         int pulse_nbr = info.pulseNbr;
-        int fft_length_tmp = info.prt_us * info.sampleFreqMHz;
+        maxInputBytes = std::max(maxInputBytes,
+                                 3 * sizeof(SampleComplexInt16) * static_cast<size_t>(sample_nbr) * pulse_nbr);
+        int fft_length_tmp = roundf(info.prt_us * info.sampleFreqMHz);
         quint32 currentTotalSamplesMax = fft_length_tmp * pulse_nbr;
         quint32 currentTotalSamples = sample_nbr * pulse_nbr;
         if(PulseLenPulseNumMax < currentTotalSamples)
@@ -846,9 +1007,7 @@ bool RCSignalProcessMain::variableApplication()
     /************************************|获取GPU数量,分配内存|************************************/
     CHECK_CUDA(cudaSetDevice(targetDevice));
     //
-    CHECK_CUDA(cudaMalloc(&echo_data_sum_int,       sizeof(short)*PulseLenPulseNumMax * 2));
-    CHECK_CUDA(cudaMalloc(&echo_data_azi_int,       sizeof(short)*PulseLenPulseNumMax * 2));
-    CHECK_CUDA(cudaMalloc(&echo_data_ele_int,       sizeof(short)*PulseLenPulseNumMax * 2));
+    CHECK_CUDA(cudaMalloc(&echo_data_sum_int,       sizeof(SampleComplexInt16) * static_cast<size_t>(PulseLenPulseNumMax) * 3));
     CHECK_CUDA(cudaMalloc(&echo_data_sum,           sizeof(cuComplex)*PulseLenPulseNumMax));
     CHECK_CUDA(cudaMalloc(&echo_data_azi,           sizeof(cuComplex)*PulseLenPulseNumMax));
     CHECK_CUDA(cudaMalloc(&echo_data_ele,           sizeof(cuComplex)*PulseLenPulseNumMax));
@@ -857,18 +1016,11 @@ bool RCSignalProcessMain::variableApplication()
     CHECK_CUDA(cudaMalloc(&echoCompensationAzi,     sizeof(cuComplex)*PulseLenPulseNumMax));
     CHECK_CUDA(cudaMalloc(&echoCompensationEle,     sizeof(cuComplex)*PulseLenPulseNumMax));
     //
-    CHECK_CUDA(cudaMalloc(&padded_echo_data_sum,    sizeof(cuComplex)*FFTLenPulseNumMax));
-    CHECK_CUDA(cudaMalloc(&padded_echo_data_azi,    sizeof(cuComplex)*FFTLenPulseNumMax));
-    CHECK_CUDA(cudaMalloc(&padded_echo_data_ele,    sizeof(cuComplex)*FFTLenPulseNumMax));
-    CHECK_CUDA(cudaMalloc(&echo_fft_data_sum,       sizeof(cuComplex)*FFTLenPulseNumMax));
-    CHECK_CUDA(cudaMalloc(&echo_fft_data_azi,       sizeof(cuComplex)*FFTLenPulseNumMax));
-    CHECK_CUDA(cudaMalloc(&echo_fft_data_ele,       sizeof(cuComplex)*FFTLenPulseNumMax));
-    CHECK_CUDA(cudaMalloc(&pc_fft_data_sum,         sizeof(cuComplex)*FFTLenPulseNumMax));
-    CHECK_CUDA(cudaMalloc(&pc_fft_data_azi,         sizeof(cuComplex)*FFTLenPulseNumMax));
-    CHECK_CUDA(cudaMalloc(&pc_fft_data_ele,         sizeof(cuComplex)*FFTLenPulseNumMax));
-    CHECK_CUDA(cudaMalloc(&pc_data_sum,             sizeof(cuComplex)*FFTLenPulseNumMax));
-    CHECK_CUDA(cudaMalloc(&pc_data_azi,             sizeof(cuComplex)*FFTLenPulseNumMax));
-    CHECK_CUDA(cudaMalloc(&pc_data_ele,             sizeof(cuComplex)*FFTLenPulseNumMax));
+    // The four sum pointers own contiguous sum/azimuth/elevation buffers.
+    CHECK_CUDA(cudaMalloc(&padded_echo_data_sum,    sizeof(cuComplex)*FFTLenPulseNumMax * 3));
+    CHECK_CUDA(cudaMalloc(&echo_fft_data_sum,       sizeof(cuComplex)*FFTLenPulseNumMax * 3));
+    CHECK_CUDA(cudaMalloc(&pc_fft_data_sum,         sizeof(cuComplex)*FFTLenPulseNumMax * 3));
+    CHECK_CUDA(cudaMalloc(&pc_data_sum,             sizeof(cuComplex)*FFTLenPulseNumMax * 3));
     //
     CHECK_CUDA(cudaMalloc(&DataWeighedMeanFilSum,   sizeof(cuComplex)*FFTLenPulseNumMax));
     CHECK_CUDA(cudaMalloc(&DataWeighedMeanFilAzi,   sizeof(cuComplex)*FFTLenPulseNumMax));
@@ -880,13 +1032,16 @@ bool RCSignalProcessMain::variableApplication()
     CHECK_CUDA(cudaMalloc(&mtd_azi_fftshift,        sizeof(cuComplex) * PulseLenPulseNumMax));
     CHECK_CUDA(cudaMalloc(&mtd_ele_fftshift,        sizeof(cuComplex) * PulseLenPulseNumMax));
     CHECK_CUDA(cudaMalloc(&mtd_abs_sum,             sizeof(float) * PulseLenPulseNumMax));
-    mtd_abs_sum_on_cpu = (float*)malloc( sizeof(float) * PulseLenPulseNumMax  );
     CHECK_CUDA(cudaMalloc(&mtd_abs_sum_clutter,     sizeof(float) * PulseLenPulseNumMax));
     //
     CHECK_CUDA(cudaMalloc(&integral_image_row,      sizeof(float) * PulseLenMTDNumMax));
     CHECK_CUDA(cudaMalloc(&integral_image_col,      sizeof(float) * PulseLenMTDNumMax));
     CHECK_CUDA(cudaMalloc(&bool_data,               sizeof(unsigned char) * PulseLenMTDNumMax));
     CHECK_CUDA(cudaMalloc(&DianJi_para,             sizeof(DianJi_para_t) * PulseLenMTDNumMax));
+    const size_t compactBlocks = (PulseLenMTDNumMax + 255) / 256;
+    CHECK_CUDA(cudaMalloc(&compactBlockCounts,      sizeof(unsigned int) * compactBlocks));
+    CHECK_CUDA(cudaMalloc(&compactBlockOffsets,     sizeof(unsigned int) * compactBlocks));
+    CHECK_CUDA(cudaMalloc(&compactDots,             sizeof(CompactDotResult)));
     // 单距离单元导出缓存:
     // pc_data_sum_Part 保存脉压后对应距离单元的一列复数数据，
     // mtd_sum_Part 保存 MTD 后对应距离单元的一列复数数据。
@@ -959,6 +1114,10 @@ bool RCSignalProcessMain::variableApplication()
     CHECK_CUDA(cudaMalloc(&integral_image_col,      sizeof(float) * PulseLenMTDNumMax));
     CHECK_CUDA(cudaMalloc(&bool_data,               sizeof(unsigned char) * PulseLenMTDNumMax));
     CHECK_CUDA(cudaMalloc(&DianJi_para,             sizeof(DianJi_para_t) * PulseLenMTDNumMax));
+    const size_t compactBlocks = (PulseLenMTDNumMax + 255) / 256;
+    CHECK_CUDA(cudaMalloc(&compactBlockCounts,      sizeof(unsigned int) * compactBlocks));
+    CHECK_CUDA(cudaMalloc(&compactBlockOffsets,     sizeof(unsigned int) * compactBlocks));
+    CHECK_CUDA(cudaMalloc(&compactDots,             sizeof(CompactDotResult)));
 #endif
     //读取窗函数系数
     kaiserCoel = (float**)malloc(size * sizeof(float*));

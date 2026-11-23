@@ -67,8 +67,8 @@ namespace SignalCore
                     placeholders::_3
                                                                             )  );
         }
-        speedRecv.setRange(0, 256);
-        speedSend.setRange(0, 256);
+        speedRecv.setRange(0, 15000);
+        speedSend.setRange(0, 15000);
         speedRecv.setUnit("个/s");
         speedSend.setUnit("个/s");
         speedRecv.setInstructions("接收速率");

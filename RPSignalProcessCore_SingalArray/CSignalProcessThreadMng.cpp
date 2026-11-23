@@ -270,6 +270,9 @@ int CSignalProcessThreadMng::RFReadShareMemory(char* data, int size)
         {
             if( ptr->head->mTrkingInfo.Purpose == 0x00  )
             {
+#if 0
+                flg =  mSpProcCore->RFSignalProcess(points, nullptr, nullptr);
+#else
                 if(ptr->head->radarType == (int)Common::ParseCoreType::RadarCF_ZT)
                 {
                     //ZT_CF Use New Clutter
@@ -302,6 +305,7 @@ int CSignalProcessThreadMng::RFReadShareMemory(char* data, int size)
                                                                 head->mWaveInfo.pulseAmount(), head->mWaveInfo.sampleNbr())
                                                        );
                 }
+#endif
             }
             else
             {
