@@ -3,12 +3,58 @@
 #include "../include/RCSignalProcessMain.h"
 #include"cmath"
 #include<algorithm>
+#include<array>
 #include<cstring>
 #include<QProcess>
 #include <sys/resource.h>
 #include <unistd.h>
 #include <TargetType.h>
 #include <SignalCore/SignalCoreGlobalVal.h>
+
+namespace
+{
+constexpr int temporaryStcCurve = 3; // TODO: Use the STC curve reported for each echo.
+constexpr int stcStartM = 54;
+constexpr int stcEndM = 3000;
+constexpr int stcGateSpacingM = 3;
+constexpr int stcGateCount = (stcEndM - stcStartM) / stcGateSpacingM + 1;
+constexpr std::array<double, 4> stcAlpha = {{1.0, 0.8, 0.6, 0.4}};
+using StcRcsGainTable = std::array<double, stcGateCount>;
+
+const StcRcsGainTable* stcRcsGainTable(int curve)
+{
+    if (curve < 0 || curve >= static_cast<int>(stcAlpha.size()))
+        return nullptr;
+
+    // Match STC_Model.m: quantize attenuation to 0.5 dB before computing gain.
+    static const auto tables = [] {
+        std::array<StcRcsGainTable, stcAlpha.size()> result{};
+        const double logSpan = std::log10(double(stcEndM) / stcStartM);
+        for (std::size_t curveIndex = 0; curveIndex < stcAlpha.size(); ++curveIndex)
+        {
+            for (int gate = 0; gate < stcGateCount; ++gate)
+            {
+                const double rangeM = stcStartM + gate * stcGateSpacingM;
+                const double normalized = std::log10(stcEndM / rangeM) / logSpan;
+                const double attenuationDb = 0.5 * std::round(60.0 * std::pow(normalized, stcAlpha[curveIndex]));
+                result[curveIndex][gate] = std::pow(10.0, attenuationDb / 10.0);
+            }
+        }
+        return result;
+    }();
+    return &tables[curve];
+}
+
+double stcRcsGain(const StcRcsGainTable* table, double rawRangeM)
+{
+    if (!table || !std::isfinite(rawRangeM) || rawRangeM <= 0.0 || rawRangeM >= stcEndM)
+        return 1.0;
+    const double rangeM = std::max(rawRangeM, double(stcStartM));
+    const auto gate = static_cast<std::size_t>((rangeM - stcStartM) / stcGateSpacingM + 0.5);
+    return (*table)[gate];
+}
+}
+
 double getProcessMemMB()
 {
     struct rusage usage;
@@ -99,12 +145,14 @@ void RCSignalProcessMain::work(const SP_para I_SP,
     CHECK_CUDA(cudaStreamWaitEvent(cudaStreamLegacy, pointsReadyEvent, 0));
     CHECK_CUDA(cudaMemcpy(&compactDotsHost, compactDots, sizeof(compactDotsHost), cudaMemcpyDeviceToHost));
     const int radarType = I_dataFromDataPar->head->radarType;
+    const bool isCfRadar = radarType == (int)Common::ParseCoreType::RadarCF ||
+                           radarType == (int)Common::ParseCoreType::RadarCF_ZT;
     SAmpRatioInquire* angleInquire = nullptr;
-    if(compactDotsHost.count != 0 &&
-            (radarType == (int)Common::ParseCoreType::RadarCF ||
-             radarType == (int)Common::ParseCoreType::RadarCF_ZT))
+    const StcRcsGainTable* stcGainTable = nullptr;
+    if(compactDotsHost.count != 0 && isCfRadar)
     {
         angleInquire = SAmpRatioInquire::GetInstance(I_dataFromDataPar->head->radarIndex);
+        stcGainTable = stcRcsGainTable(temporaryStcCurve);
     }
     if(compactDotsHost.count != 0)
     {
@@ -176,7 +224,7 @@ void RCSignalProcessMain::work(const SP_para I_SP,
                                                      dot_tmp.eleRatio);
                 break;
         }
-        calculateRCS(dot_tmp);
+        calculateRCS(dot_tmp, stcRcsGain(stcGainTable, DianJi_para_h.range));
 //                if (fillPcAndMtdExportData(dot_tmp, i, I_dataFromDataPar, DotNum))
 //                {
 //                    M_Range = i;
@@ -211,14 +259,14 @@ void RCSignalProcessMain::work(const SP_para I_SP,
     }
 }
 
-void RCSignalProcessMain::calculateRCS(IRadarV51::SignalProcPoint& dot_tmp)
+void RCSignalProcessMain::calculateRCS(IRadarV51::SignalProcPoint& dot_tmp, double stcGain)
 {
     Fazi_t = exp(-2.7726 * pow((dot_tmp.azimuth_array - data_pack_para_current.bc_azi) / seitaHalfAzi, 2));
     Fele_t = exp(-2.7726 * pow((dot_tmp.elevation_array - data_pack_para_current.bc_ele) / seitaHalfEle, 2));
     Fazi_r = exp(-2.7726 * pow((dot_tmp.azimuth_array - data_pack_para_current.bc_azi) / (alpha_azi * seitaHalfAzi), 2));
     Fele_r = exp(-2.7726 * pow((dot_tmp.elevation_array - data_pack_para_current.bc_ele) / (alpha_ele * seitaHalfEle), 2));
     dot_tmp.RCS = pow(dot_tmp.range_array, 4) * pow(4 * M_PI, 3) * pow(dot_tmp.amplitude / (50 * wave_para_current.pw_us) / wave_para_current.pulse_number / pow(10, 74.0 / 10.0 / 2.0) / pow(2, 15) * 1.3 * 1.4, 2) * 0.01 * 6.310 /
-                  (484.57 * pow(10, (32.7221 / 10.0)) * pow(10, (31.9221 / 10.0)) * Fazi_t* Fele_t* Fazi_r * Fele_r * pow(cos(dot_tmp.azimuth_array * M_PI / 180) * cos(dot_tmp.elevation_array * M_PI / 180), 2) * lambda * lambda) * 4;
+                  (484.57 * pow(10, (32.7221 / 10.0)) * pow(10, (31.9221 / 10.0)) * Fazi_t* Fele_t* Fazi_r * Fele_r * pow(cos(dot_tmp.azimuth_array * M_PI / 180) * cos(dot_tmp.elevation_array * M_PI / 180), 2) * lambda * lambda) * 4 * stcGain;
 }
 
 bool RCSignalProcessMain::fillPcAndMtdExportData(IRadarV51::SignalProcPoint& dot_tmp,

@@ -287,7 +287,7 @@ private:
     std::unordered_map<const void*, HostRegistration> inputRegistrations;
     size_t maxInputBytes = 0;
     bool pinInput = true;
-    void calculateRCS(IRadarV51::SignalProcPoint& dot_tmp);
+    void calculateRCS(IRadarV51::SignalProcPoint& dot_tmp, double stcGain);
     float* deviceClutter(const shared_ptr<DefClutterMemory>& clutter);
     void flushClutterCache();
     bool fillPcAndMtdExportData(IRadarV51::SignalProcPoint& dot_tmp,
